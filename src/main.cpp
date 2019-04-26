@@ -2,72 +2,62 @@
 
 #include "seal/seal.h"
 
+#include "psi.h"
+
 using namespace std;
 using namespace seal;
 
 int main()
 {
-    /* simplified example adapted from
-       https://github.com/Microsoft/SEAL/blob/master/native/examples/examples.cpp
-     */
+    // all integers are going to be printed as hex now
+    cout << hex;
 
+    // step 1: agreeing on parameters. currently just hard-coded, TODO.
     EncryptionParameters parms(scheme_type::BFV);
     parms.set_poly_modulus_degree(2048);
-    parms.set_coeff_modulus(DefaultParams::coeff_modulus_128(2048));
+    // parms.set_coeff_modulus(DefaultParams::coeff_modulus_128(2048));
+    /* NB: THIS IS UNSAFE. TODO: figure out how to pick the right parameters
+       to get enough security, but also enough budget for computations. */
+    vector<SmallModulus> modulus = {DefaultParams::small_mods_60bit(0),
+                                    DefaultParams::small_mods_60bit(1),
+                                    DefaultParams::small_mods_60bit(2),
+                                    DefaultParams::small_mods_60bit(3)};
+    parms.set_coeff_modulus(modulus);
     parms.set_plain_modulus(1 << 8);
-
     auto context = SEALContext::Create(parms);
 
-    KeyGenerator keygen(context);
-    PublicKey public_key = keygen.public_key();
-    SecretKey secret_key = keygen.secret_key();
+    // step 2: receiver generates keys and inputs with the keys
+    PSIReceiver user(context, 8);
+    vector<int> receiver_inputs = {0x11, 0x22, 0xca, 0xfe};
+    auto receiver_encrypted_inputs = user.encrypt_inputs(receiver_inputs);
 
-    IntegerEncoder encoder(context);
-
-    /* suppose we want to implement a simplistic protocol where Alice encrypts
-       two numbers x and y, and wants Bob to compute (x + y) * x for her. */
-    cout << "suppose Alice wants Bob to compute (x + y) * x for her, for some secret inputs x and y" << endl;
+    cout << "User's set: ";
+    for (int x : receiver_inputs) {
+        cout << x << " ";
+    }
     cout << endl;
 
-    /* stage 1: Alice encrypts her inputs, e.g. x = 5, y = -3 */
-    Encryptor encryptor(context, public_key);
-    Decryptor decryptor(context, secret_key);
-    int x = 5;
-    int y = -3;
-    cout << "Alice sets x = " << x << ", y = " << y << endl;
+    // step 3: the sender evaluates polynomials
+    // (after having received the receiver's public key and encrypted inputs)
+    PSISender server(context, 8);
+    vector<int> sender_inputs = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x22, 0xfe};
+    auto sender_matches = server.compute_matches(sender_inputs, user.public_key(), receiver_encrypted_inputs);
 
-    Plaintext x_plain = encoder.encode(x);
-    Plaintext y_plain = encoder.encode(y);
-    cout << "encoded as polynomials, that's x = " << x_plain.to_string() << ", y = " << y_plain.to_string() << endl;
-
-    Ciphertext x_encrypted, y_encrypted;
-    encryptor.encrypt(x_plain, x_encrypted);
-    encryptor.encrypt(y_plain, y_encrypted);
-    cout << "Alice encrypts the two inputs. each of them currently has a noise budget of "
-         << decryptor.invariant_noise_budget(x_encrypted) << " bits" << endl;
+    cout << "Sender's set: ";
+    for (int x : sender_inputs) {
+        cout << x << " ";
+    }
     cout << endl;
 
-    /* stage 2: suppose Alice has sent x_encrypted and y_encrypted over to Bob.
-       now Bob evaluates the formula over the ciphertexts. */
-    Evaluator evaluator(context);
-    /* the operations are in-place: they overwrite the first argument */
-    evaluator.add_inplace(y_encrypted, x_encrypted);
-    cout << "Bob computes z = (x + y) over the ciphertexts. the noise budget is still "
-         << decryptor.invariant_noise_budget(y_encrypted) << " bits, because addition is cheap" << endl;
-    /* now y_encrypted holds E(x + y) */
-    evaluator.multiply_inplace(y_encrypted, x_encrypted);
-    cout << "Bob computes w = z * x over the ciphertexts. the noise budget is down to "
-         << decryptor.invariant_noise_budget(y_encrypted) << " bits, because multiplication is expensive" << endl;
-    /* now y_encrypted holds E((x + y) * x), so Bob sends that over to Alice */
+    // step 4: the receiver decrypts the matches
+    // (after having received the encrypted matches)
+    auto receiver_matches = user.decrypt_matches(sender_matches);
+
+    cout << "Matches: ";
+    for (int i : receiver_matches) {
+        cout << receiver_inputs[i] << " ";
+    }
     cout << endl;
-
-    /* stage 3: Alice decryptes the answer. notice that this is the only stage
-       where we use the private key. */
-
-    Plaintext result;
-    decryptor.decrypt(y_encrypted, result);
-    cout << "Alice gets the encrypted result and decrypts, getting " << result.to_string() << endl;
-    cout << "converting back to an integer, that's " << encoder.decode_int32(result) << endl;
 
     return 0;
 }
