@@ -9,7 +9,7 @@
 #include <iostream>
 // we save the receiver's key in a global variable, because it is helpful to
 // have access to it when debugging sender code.
-SecretKey receiver_key_leaked;
+SecretKey *receiver_key_leaked;
 #endif
 
 PSIReceiver::PSIReceiver(shared_ptr<SEALContext> context, size_t input_bits)
@@ -20,7 +20,7 @@ PSIReceiver::PSIReceiver(shared_ptr<SEALContext> context, size_t input_bits)
       secret_key(keygen.secret_key())
 {
 #ifdef DEBUG
-    receiver_key_leaked = secret_key;
+    receiver_key_leaked = &secret_key;
 #endif
 }
 
@@ -91,7 +91,7 @@ vector<Ciphertext> PSISender::compute_matches(vector<int> &inputs,
         encryptor.encrypt(encoder.encode(random_mask), result[i]);
 
 #ifdef DEBUG
-        Decryptor decryptor(context, receiver_key_leaked);
+        Decryptor decryptor(context, *receiver_key_leaked);
         cerr << "computing matches for receiver input #" << i << endl;
         cerr << "initially the noise budget is " << decryptor.invariant_noise_budget(result[i]) << endl;
 #endif
