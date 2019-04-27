@@ -2,6 +2,16 @@
 
 #include "psi.h"
 
+#define DEBUG
+
+#ifdef DEBUG
+// this code will only be compiled in debug mode.
+#include <iostream>
+// we save the receiver's key in a global variable, because it is helpful to
+// have access to it when debugging sender code.
+SecretKey receiver_key_leaked;
+#endif
+
 PSIReceiver::PSIReceiver(shared_ptr<SEALContext> context, size_t input_bits)
     : context(context),
       input_bits(input_bits),
@@ -9,6 +19,9 @@ PSIReceiver::PSIReceiver(shared_ptr<SEALContext> context, size_t input_bits)
       public_key_(keygen.public_key()),
       secret_key(keygen.secret_key())
 {
+#ifdef DEBUG
+    receiver_key_leaked = secret_key;
+#endif
 }
 
 vector<Ciphertext> PSIReceiver::encrypt_inputs(vector<int> &inputs)
@@ -77,11 +90,21 @@ vector<Ciphertext> PSISender::compute_matches(vector<int> &inputs,
         int random_mask = random->generate() & ((1 << input_bits) - 1);
         encryptor.encrypt(encoder.encode(random_mask), result[i]);
 
+#ifdef DEBUG
+        Decryptor decryptor(context, receiver_key_leaked);
+        cerr << "computing matches for receiver input #" << i << endl;
+        cerr << "initially the noise budget is " << decryptor.invariant_noise_budget(result[i]) << endl;
+#endif
+
         for (size_t j = 0; j < inputs.size(); j++) {
             // term = (receiver_inputs[i] - inputs[j])
             Ciphertext term;
             evaluator.sub_plain(receiver_inputs[i], encoded_inputs[j], term);
             evaluator.multiply_inplace(result[i], term);
+
+#ifdef DEBUG
+        cerr << "after match " << j << " it is " << decryptor.invariant_noise_budget(result[i]) << endl;
+#endif
         }
     }
 
