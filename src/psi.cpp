@@ -1,6 +1,7 @@
 #include "seal/seal.h"
 
 #include "psi.h"
+#include "polynomials.cpp"
 
 #define DEBUG
 
@@ -47,7 +48,16 @@ vector<size_t> PSIReceiver::decrypt_matches(vector<Ciphertext> &encrypted_matche
         Plaintext decrypted;
         decryptor.decrypt(encrypted_matches[i], decrypted);
 
-        if (decrypted.is_zero()) {
+        int64_t decrypted_value;
+        try {
+            decrypted_value = encoder.decode_int64(decrypted);
+        } catch (invalid_argument) {
+            // the decrypted value is too big to fit into an int64, so it's
+            // definitely not zero.
+            continue;
+        }
+
+        if (decrypted_value == 0) {
             result.push_back(i);
         }
     }
@@ -79,16 +89,32 @@ vector<Ciphertext> PSISender::compute_matches(vector<int> &inputs,
     IntegerEncoder encoder(context);
     Evaluator evaluator(context);
 
-    vector<Plaintext> encoded_inputs(inputs.size());
-    for (size_t i = 0; i < inputs.size(); i++) {
-        encoder.encode(inputs[i], encoded_inputs[i]);
+    // compute the coefficients of the polynomial f(x) = \prod_i (x - inputs[i])
+    vector<int> f_coeffs = polynomial_from_roots(inputs);
+    vector<Plaintext> f_coeffs_enc(f_coeffs.size());
+    for (size_t i = 0; i < f_coeffs.size(); i++) {
+        encoder.encode(f_coeffs[i], f_coeffs_enc[i]);
     }
 
+    vector<Ciphertext> powers(f_coeffs.size());
+    encryptor.encrypt(encoder.encode(1), powers[0]);
+
+    Ciphertext zero;
+    encryptor.encrypt(encoder.encode(0), zero);
+
     for (size_t i = 0; i < receiver_inputs.size(); i++) {
-        /* the result starts out with a random value, and is then multiplied
-           by (receiver_inputs[i] - inputs[j]) for each j */
-        int random_mask = random->generate() & ((1 << input_bits) - 1);
-        encryptor.encrypt(encoder.encode(random_mask), result[i]);
+        // first, compute all the powers of the receiver's input
+        powers[1] = receiver_inputs[i];
+        for (size_t j = 2; j < powers.size(); j++) {
+            if (j & 2 == 0) {
+                evaluator.square(powers[j >> 1], powers[j]);
+            } else {
+                evaluator.multiply(powers[j - 1], powers[1], powers[j]);
+            }
+        }
+
+        // now use the computed powers to evaluate f(input)
+        result[i] = zero;
 
 #ifdef DEBUG
         Decryptor decryptor(context, *receiver_key_leaked);
@@ -96,16 +122,23 @@ vector<Ciphertext> PSISender::compute_matches(vector<int> &inputs,
         cerr << "initially the noise budget is " << decryptor.invariant_noise_budget(result[i]) << endl;
 #endif
 
-        for (size_t j = 0; j < inputs.size(); j++) {
-            // term = (receiver_inputs[i] - inputs[j])
+        for (size_t j = 0; j < f_coeffs.size(); j++) {
+            // term = receiver_inputs[i]^j * f_coeffs[j]
             Ciphertext term;
-            evaluator.sub_plain(receiver_inputs[i], encoded_inputs[j], term);
-            evaluator.multiply_inplace(result[i], term);
+            if (f_coeffs[j] != 0) {
+                // multiply_plain does not allow the second parameter to be zero.
+                evaluator.multiply_plain(powers[j], f_coeffs_enc[j], term);
+                evaluator.add_inplace(result[i], term);
+            }
 
 #ifdef DEBUG
-        cerr << "after match " << j << " it is " << decryptor.invariant_noise_budget(result[i]) << endl;
+        cerr << "after term " << j << " it is " << decryptor.invariant_noise_budget(result[i]) << endl;
 #endif
         }
+
+        // now multiply the result of the computation by a random mask
+        int random_mask = random->generate() & ((1 << input_bits) - 1);
+        evaluator.multiply_plain_inplace(result[i], encoder.encode(random_mask));
     }
 
     return result;

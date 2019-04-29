@@ -14,15 +14,11 @@ int main()
 
     // step 1: agreeing on parameters. currently just hard-coded, TODO.
     EncryptionParameters parms(scheme_type::BFV);
-    parms.set_poly_modulus_degree(2048);
-    // parms.set_coeff_modulus(DefaultParams::coeff_modulus_128(2048));
-    /* NB: THIS IS UNSAFE. TODO: figure out how to pick the right parameters
-       to get enough security, but also enough budget for computations. */
-    vector<SmallModulus> modulus = {DefaultParams::small_mods_60bit(0),
-                                    DefaultParams::small_mods_60bit(1),
-                                    DefaultParams::small_mods_60bit(2),
-                                    DefaultParams::small_mods_60bit(3)};
-    parms.set_coeff_modulus(modulus);
+    parms.set_poly_modulus_degree(8192);
+    parms.set_coeff_modulus(DefaultParams::coeff_modulus_128(8192));
+    // TODO: right now, the scheme doesn't work right if the coefficients of
+    // the polynomial f exceed this modulus. figure out why that is the case
+    // and fix it.
     parms.set_plain_modulus(1 << 8);
     auto context = SEALContext::Create(parms);
 
