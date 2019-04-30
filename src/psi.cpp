@@ -13,6 +13,40 @@
 SecretKey *receiver_key_leaked;
 #endif
 
+/* This helper function uses a BatchEncoder to encode the vector
+   [value, value, value, ..., value] into destination. */
+void encode_const_vector(BatchEncoder &encoder, uint64_t value, Plaintext &destination)
+{
+    size_t slot_count = encoder.slot_count();
+    destination.resize(slot_count);
+    for (size_t i = 0; i < slot_count; i++) {
+        destination[i] = value;
+    }
+    encoder.encode(destination);
+}
+
+/* This helper function uses a UniformRandomGenerator (which outputs 32-bit
+   values) to uniformly pick a random nonzero element of a given field Z_p. */
+uint64_t random_field_element(shared_ptr<UniformRandomGenerator> random, uint64_t modulus) {
+    /* here's the trick: suppose 2^k < modulus <= 2^{k+1}. then we draw a random
+       number x between 0 and 2^{k+1}. if it's less than modulus, we return it,
+       otherwise we draw again (so the probability of success is at least 1/2). */
+    uint64_t k = 0;
+    while (modulus > (1ULL << k)) {
+        k++;
+    }
+
+    uint64_t result;
+    do {
+        // generate 64 bits of randomness
+        result = (random->generate() | ((uint64_t) random->generate() << 32));
+        // reduce that to k bits of randomness;
+        result = (result >> (64 - k));
+    } while ((result == 0) || (result >= modulus));
+
+    return result;
+}
+
 PSIReceiver::PSIReceiver(shared_ptr<SEALContext> context, size_t input_bits)
     : context(context),
       input_bits(input_bits),
@@ -25,14 +59,36 @@ PSIReceiver::PSIReceiver(shared_ptr<SEALContext> context, size_t input_bits)
 #endif
 }
 
-vector<Ciphertext> PSIReceiver::encrypt_inputs(vector<int> &inputs)
+vector<Ciphertext> PSIReceiver::encrypt_inputs(vector<uint64_t> &inputs)
 {
     Encryptor encryptor(context, public_key_);
-    IntegerEncoder encoder(context);
-    vector<Ciphertext> result(inputs.size());
+    BatchEncoder encoder(context);
+    size_t slot_count = encoder.slot_count();
 
-    for (size_t i = 0; i < inputs.size(); i++) {
-        encryptor.encrypt(encoder.encode(inputs[i]), result[i]);
+    // each ciphertext will encode (at most) slot_count inputs, so we'll
+    // need ceil(n / slot_count) ciphertexts.
+    size_t ciphertext_count = (inputs.size() + (slot_count - 1)) / slot_count;
+    vector<Ciphertext> result(ciphertext_count);
+
+    Plaintext inputs_grouped(slot_count, slot_count);
+
+    for (size_t i = 0; i < ciphertext_count; i++) {
+        // figure out how many inputs we'll be putting into this ciphertext:
+        // this is slot_count for all blocks except the last one
+        size_t inputs_here = (i < ciphertext_count - 1)
+                             ? slot_count
+                             : (inputs.size() % slot_count);
+
+        inputs_grouped.resize(inputs_here);
+        for (size_t j = 0; j < inputs_here; j++) {
+            // TODO: do we need to reduce by plain_modulus here?
+            inputs_grouped[j] = inputs[slot_count * i + j];
+        }
+
+        // encode all of the inputs, in-place
+        encoder.encode(inputs_grouped);
+
+        encryptor.encrypt(inputs_grouped, result[i]);
     }
 
     return result;
@@ -41,24 +97,27 @@ vector<Ciphertext> PSIReceiver::encrypt_inputs(vector<int> &inputs)
 vector<size_t> PSIReceiver::decrypt_matches(vector<Ciphertext> &encrypted_matches)
 {
     Decryptor decryptor(context, secret_key);
-    IntegerEncoder encoder(context);
+    BatchEncoder encoder(context);
+    size_t slot_count = encoder.slot_count();
+
     vector<size_t> result;
 
     for (size_t i = 0; i < encrypted_matches.size(); i++) {
         Plaintext decrypted;
         decryptor.decrypt(encrypted_matches[i], decrypted);
 
-        int64_t decrypted_value;
-        try {
-            decrypted_value = encoder.decode_int64(decrypted);
-        } catch (invalid_argument) {
-            // the decrypted value is too big to fit into an int64, so it's
-            // definitely not zero.
-            continue;
-        }
+        // decode in-place
+        encoder.decode(decrypted);
 
-        if (decrypted_value == 0) {
-            result.push_back(i);
+        for (size_t j = 0; j < slot_count; j++) {
+            // TODO: if the number of inputs was not divisible by slot_count,
+            // we'll get some extra zeroes at the end of the encoded inputs,
+            // so we'll get some extra elements here. for now, assume 0 is not
+            // in the sender's set, so the polynomial won't evaluate to 0 there.
+            // (otherwise we might return out-of-bound indices here)
+            if (decrypted[j] == 0) {
+                result.push_back(slot_count * i + j);
+            }
         }
     }
 
@@ -76,7 +135,7 @@ PSISender::PSISender(shared_ptr<SEALContext> context, size_t input_bits)
 {
 }
 
-vector<Ciphertext> PSISender::compute_matches(vector<int> &inputs,
+vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
                                               PublicKey& receiver_public_key,
                                               vector<Ciphertext> &receiver_inputs)
 {
@@ -85,22 +144,26 @@ vector<Ciphertext> PSISender::compute_matches(vector<int> &inputs,
     auto random_factory = UniformRandomGeneratorFactory::default_factory();
     auto random = random_factory->create();
 
+    uint64_t plain_modulus = context->context_data()->parms().plain_modulus().value();
+
     Encryptor encryptor(context, receiver_public_key);
-    IntegerEncoder encoder(context);
+    BatchEncoder encoder(context);
+    size_t slot_count = encoder.slot_count();
+
     Evaluator evaluator(context);
 
     // compute the coefficients of the polynomial f(x) = \prod_i (x - inputs[i])
-    vector<int> f_coeffs = polynomial_from_roots(inputs);
+    vector<uint64_t> f_coeffs = polynomial_from_roots(inputs, plain_modulus);
     vector<Plaintext> f_coeffs_enc(f_coeffs.size());
     for (size_t i = 0; i < f_coeffs.size(); i++) {
-        encoder.encode(f_coeffs[i], f_coeffs_enc[i]);
+        encode_const_vector(encoder, f_coeffs[i], f_coeffs_enc[i]);
     }
 
-    vector<Ciphertext> powers(f_coeffs.size());
-    encryptor.encrypt(encoder.encode(1), powers[0]);
+    Ciphertext f_const_term_encrypted;
+    encryptor.encrypt(f_coeffs_enc[0], f_const_term_encrypted);
 
-    Ciphertext zero;
-    encryptor.encrypt(encoder.encode(0), zero);
+    vector<Ciphertext> powers(f_coeffs.size());
+    // NB: powers[0] is undefined!
 
     for (size_t i = 0; i < receiver_inputs.size(); i++) {
         // first, compute all the powers of the receiver's input
@@ -114,15 +177,15 @@ vector<Ciphertext> PSISender::compute_matches(vector<int> &inputs,
         }
 
         // now use the computed powers to evaluate f(input)
-        result[i] = zero;
+        result[i] = f_const_term_encrypted;
 
 #ifdef DEBUG
         Decryptor decryptor(context, *receiver_key_leaked);
-        cerr << "computing matches for receiver input #" << i << endl;
+        cerr << "computing matches for receiver batch #" << i << endl;
         cerr << "initially the noise budget is " << decryptor.invariant_noise_budget(result[i]) << endl;
 #endif
 
-        for (size_t j = 0; j < f_coeffs.size(); j++) {
+        for (size_t j = 1; j < f_coeffs.size(); j++) {
             // term = receiver_inputs[i]^j * f_coeffs[j]
             Ciphertext term;
             if (f_coeffs[j] != 0) {
@@ -136,9 +199,13 @@ vector<Ciphertext> PSISender::compute_matches(vector<int> &inputs,
 #endif
         }
 
-        // now multiply the result of the computation by a random mask
-        int random_mask = random->generate() & ((1 << input_bits) - 1);
-        evaluator.multiply_plain_inplace(result[i], encoder.encode(random_mask));
+        // now multiply the result of each computation by a random mask
+        Plaintext random_mask(slot_count, slot_count);
+        for (size_t j = 0; j < slot_count; j++) {
+            random_mask[j] = random_field_element(random, plain_modulus);
+        }
+        encoder.encode(random_mask);
+        evaluator.multiply_plain_inplace(result[i], random_mask);
     }
 
     return result;

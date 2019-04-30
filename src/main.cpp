@@ -16,19 +16,18 @@ int main()
     EncryptionParameters parms(scheme_type::BFV);
     parms.set_poly_modulus_degree(8192);
     parms.set_coeff_modulus(DefaultParams::coeff_modulus_128(8192));
-    // TODO: right now, the scheme doesn't work right if the coefficients of
-    // the polynomial f exceed this modulus. figure out why that is the case
-    // and fix it.
-    parms.set_plain_modulus(1 << 8);
+    // for batching to work, the plain modulus must be a prime that's equal
+    // to 1 mod (2 * poly_modulus_degree)
+    parms.set_plain_modulus((8192* 2 * 4) + 1);
     auto context = SEALContext::Create(parms);
 
     // step 2: receiver generates keys and inputs with the keys
     PSIReceiver user(context, 8);
-    vector<int> receiver_inputs = {0x11, 0x22, 0xca, 0xfe};
+    vector<uint64_t> receiver_inputs = {0x11, 0x22, 0xca, 0xfe};
     auto receiver_encrypted_inputs = user.encrypt_inputs(receiver_inputs);
 
     cout << "User's set: ";
-    for (int x : receiver_inputs) {
+    for (uint64_t x : receiver_inputs) {
         cout << x << " ";
     }
     cout << endl;
@@ -36,11 +35,11 @@ int main()
     // step 3: the sender evaluates polynomials
     // (after having received the receiver's public key and encrypted inputs)
     PSISender server(context, 8);
-    vector<int> sender_inputs = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x22, 0xfe};
+    vector<uint64_t> sender_inputs = {0x02, 0x03, 0x04, 0x05, 0x22, 0xfe};
     auto sender_matches = server.compute_matches(sender_inputs, user.public_key(), receiver_encrypted_inputs);
 
     cout << "Sender's set: ";
-    for (int x : sender_inputs) {
+    for (uint64_t x : sender_inputs) {
         cout << x << " ";
     }
     cout << endl;
@@ -50,7 +49,7 @@ int main()
     auto receiver_matches = user.decrypt_matches(sender_matches);
 
     cout << "Matches: ";
-    for (int i : receiver_matches) {
+    for (size_t i : receiver_matches) {
         cout << receiver_inputs[i] << " ";
     }
     cout << endl;

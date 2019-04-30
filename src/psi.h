@@ -7,7 +7,7 @@ class PSIReceiver
 {
 public:
     PSIReceiver(shared_ptr<SEALContext> context, size_t input_bits);
-    vector<Ciphertext> encrypt_inputs(vector<int> &inputs);
+    vector<Ciphertext> encrypt_inputs(vector<uint64_t> &inputs);
     vector<size_t> decrypt_matches(vector<Ciphertext> &encrypted_matches);
     PublicKey& public_key();
 
@@ -23,7 +23,7 @@ class PSISender
 {
 public:
     PSISender(shared_ptr<SEALContext> context, size_t input_bits);
-    vector<Ciphertext> compute_matches(vector<int> &inputs,
+    vector<Ciphertext> compute_matches(vector<uint64_t> &inputs,
                                        PublicKey& receiver_public_key,
                                        vector<Ciphertext> &receiver_inputs);
 
