@@ -50,7 +50,11 @@ int main()
 
     cout << "Matches: ";
     for (size_t i : receiver_matches) {
-        cout << receiver_inputs[i] << " ";
+        if (i < receiver_inputs.size()) {
+            cout << i << ":" << receiver_inputs[i] << " ";
+        } else {
+            cout << i << ":INVALID ";
+        }
     }
     cout << endl;
 
