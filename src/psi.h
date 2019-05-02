@@ -10,6 +10,7 @@ public:
     vector<Ciphertext> encrypt_inputs(vector<uint64_t> &inputs);
     vector<size_t> decrypt_matches(vector<Ciphertext> &encrypted_matches);
     PublicKey& public_key();
+    RelinKeys relin_keys();
 
 private:
     shared_ptr<SEALContext> context;
@@ -25,6 +26,7 @@ public:
     PSISender(shared_ptr<SEALContext> context, size_t input_bits);
     vector<Ciphertext> compute_matches(vector<uint64_t> &inputs,
                                        PublicKey& receiver_public_key,
+                                       RelinKeys relin_keys,
                                        vector<Ciphertext> &receiver_inputs);
 
 private:

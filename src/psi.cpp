@@ -129,6 +129,11 @@ PublicKey& PSIReceiver::public_key()
     return public_key_;
 }
 
+RelinKeys PSIReceiver::relin_keys()
+{
+    return keygen.relin_keys(5);
+}
+
 PSISender::PSISender(shared_ptr<SEALContext> context, size_t input_bits)
     : context(context),
       input_bits(input_bits)
@@ -137,6 +142,7 @@ PSISender::PSISender(shared_ptr<SEALContext> context, size_t input_bits)
 
 vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
                                               PublicKey& receiver_public_key,
+                                              RelinKeys relin_keys,
                                               vector<Ciphertext> &receiver_inputs)
 {
     vector<Ciphertext> result(receiver_inputs.size());
@@ -174,6 +180,7 @@ vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
             } else {
                 evaluator.multiply(powers[j - 1], powers[1], powers[j]);
             }
+            evaluator.relinearize_inplace(powers[j], relin_keys);
         }
 
         // now use the computed powers to evaluate f(input)
@@ -191,6 +198,7 @@ vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
             if (f_coeffs[j] != 0) {
                 // multiply_plain does not allow the second parameter to be zero.
                 evaluator.multiply_plain(powers[j], f_coeffs_enc[j], term);
+                evaluator.relinearize_inplace(term, relin_keys);
                 evaluator.add_inplace(result[i], term);
             }
 
@@ -206,6 +214,9 @@ vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
         }
         encoder.encode(random_mask);
         evaluator.multiply_plain_inplace(result[i], random_mask);
+        // since we're done computing on this, this relinearization is really
+        // only helpful to decrease communication costs
+        evaluator.relinearize_inplace(result[i], relin_keys);
     }
 
     return result;
