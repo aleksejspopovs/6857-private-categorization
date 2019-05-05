@@ -36,7 +36,12 @@ int main()
     // (after having received the receiver's public key and encrypted inputs)
     PSISender server(context, 8);
     vector<uint64_t> sender_inputs = {0x02, 0x03, 0x04, 0x05, 0x22, 0xfe};
-    auto sender_matches = server.compute_matches(sender_inputs, user.public_key(), receiver_encrypted_inputs);
+    auto sender_matches = server.compute_matches(
+        sender_inputs,
+        user.public_key(),
+        user.relin_keys(),
+        receiver_encrypted_inputs
+    );
 
     cout << "Sender's set: ";
     for (uint64_t x : sender_inputs) {
