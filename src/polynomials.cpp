@@ -13,7 +13,6 @@ polynomial_from_roots(l) returns the coefficients of the polynomial
 
 time complexity: O(n²), where n is the size of l
 */
-#include <iostream>
 template <typename T>
 std::vector<T> polynomial_from_roots(std::vector<T> &roots, T modulus) {
     std::vector<T> result(roots.size() + 1, 0);
