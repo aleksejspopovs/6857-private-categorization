@@ -1,6 +1,8 @@
 #pragma once
 #include "seal/seal.h"
 
+#include "hashing.h"
+
 using namespace std;
 using namespace seal;
 
@@ -11,6 +13,7 @@ public:
     size_t hash_functions();
     size_t bucket_count_log();
     size_t sender_bucket_capacity();
+    uint64_t encode_bucket_element(bucket_slot &element, bool is_receiver);
     // you *must* call either generate_seeds or set_seeds.
     void generate_seeds();
     void set_seeds(vector<uint64_t> &seeds_ext);
