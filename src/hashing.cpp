@@ -1,41 +1,57 @@
-#include <iostream>
+#include <cassert>
 
-#include "seal/seal.h"
+#include "aes.h"
 
-#include "psi.h"
+#include "hashing.h"
 
+using namespace std;
 
-using namespace std
-using namespace seal
+uint64_t aes_hash(AES &aes, size_t bits, uint64_t value) {
+	assert(bits < 64);
+	auto ciphertext = aes.encrypt(0, value);
+	return (ciphertext.second ^ value) & ((1ull << bits) - 1);
+}
 
-map<int,string> cuckooHash(set<string> inputs,int buckets,int h,function<int buckets,hashfunctions> hashFunctionGenerator)
-	/** Given a set of strings and a number of buckets, hashes exactly one string to each bucket. hashFunctionGenerator should be a method that given a number of buckets,
-	returns a hash function from strings to that number of buckets. This could be implemented for example as AES(r,s) mod buckets. 
-	**/
-	list<function> hashFunctions;  //not sure what the type of a hash functioyn will be.
-	for (int i=0;i<h;i++){
-		hashFunctions.insert(hashFunctionGenerator(buckets));
-	 }
-	map<int,string> bucketPlacement;
-	map<string, int> hashNumberUsed;
-	for (auto s: inputs){
-		bool resolved=false;
-		int placement=hashFunctions[0](s);
-		hashNumberUsed[s]=0;
-		string currentString=s;
-		while(!resolved){
-			if (bucketPlacement.find(placement)=bucketPlacement.end()){//is this actually how you check that something is in the map?
-				resolved=true;
-				bucketPlacement[placement].insert(s)
-			}
-			else{
-				//if the bucket is full, you move its inhabitant to a new location
-				currentString=bucketPlacement[placement]
-				bucketPlacement[placement]=s
-				hashNumberUsed[currentString]+=1
-				placement=hashFunctions[hashNumberUsed[currentString]](currentString)
+size_t loc_aes_hash(AES &aes, size_t m, uint64_t value) {
+	return aes_hash(aes, m, value >> m) ^ (value & ((1ull << m) - 1));
+}
+
+bool cuckoo_hash(shared_ptr<UniformRandomGenerator> random,
+	             vector<uint64_t> &inputs,
+	             size_t m,
+	             vector<pair<uint64_t, size_t>> &buckets,
+	             vector<uint64_t> &seeds)
+{
+	assert(buckets.size() == (1 << m));
+
+	vector<AES> aes(seeds.size());
+	for (size_t i = 0; i < seeds.size(); i++) {
+		aes[i].set_key(0, seeds[i]);
+	}
+
+	for (uint64_t s : inputs) {
+		bool resolved = false;
+		pair<uint64_t, size_t> current_item = make_pair(
+			s,
+			random_integer(random, seeds.size())
+		);
+
+		// TODO: keep track of # of operations and abort if exceeding some limit
+		while (!resolved) {
+			size_t loc = loc_aes_hash(aes[current_item.second], m, current_item.first);
+
+			buckets[loc].swap(current_item);
+
+			if (current_item == BUCKET_EMPTY) {
+				resolved = true;
+			} else {
+				size_t old_hash = current_item.second;
+				while (current_item.second == old_hash) {
+					current_item.second = random_integer(random, seeds.size());
+				}
 			}
 		}
 	}
-	return bucketPlacement; //should probably also return the hash functions?
 
+	return true;
+}

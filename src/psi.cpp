@@ -2,6 +2,7 @@
 
 #include "psi.h"
 #include "polynomials.cpp"
+#include "random.h"
 
 #define DEBUG
 
@@ -23,28 +24,6 @@ void encode_const_vector(BatchEncoder &encoder, uint64_t value, Plaintext &desti
         destination[i] = value;
     }
     encoder.encode(destination);
-}
-
-/* This helper function uses a UniformRandomGenerator (which outputs 32-bit
-   values) to uniformly pick a random nonzero element of a given field Z_p. */
-uint64_t random_field_element(shared_ptr<UniformRandomGenerator> random, uint64_t modulus) {
-    /* here's the trick: suppose 2^k < modulus <= 2^{k+1}. then we draw a random
-       number x between 0 and 2^{k+1}. if it's less than modulus, we return it,
-       otherwise we draw again (so the probability of success is at least 1/2). */
-    uint64_t k = 0;
-    while (modulus > (1ULL << k)) {
-        k++;
-    }
-
-    uint64_t result;
-    do {
-        // generate 64 bits of randomness
-        result = (random->generate() | ((uint64_t) random->generate() << 32));
-        // reduce that to k bits of randomness;
-        result = (result >> (64 - k));
-    } while ((result == 0) || (result >= modulus));
-
-    return result;
 }
 
 PSIReceiver::PSIReceiver(shared_ptr<SEALContext> context, size_t input_bits)
@@ -210,7 +189,7 @@ vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
         // now multiply the result of each computation by a random mask
         Plaintext random_mask(slot_count, slot_count);
         for (size_t j = 0; j < slot_count; j++) {
-            random_mask[j] = random_field_element(random, plain_modulus);
+            random_mask[j] = random_nonzero_integer(random, plain_modulus);
         }
         encoder.encode(random_mask);
         evaluator.multiply_plain_inplace(result[i], random_mask);
