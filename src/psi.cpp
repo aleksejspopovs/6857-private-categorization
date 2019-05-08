@@ -1,3 +1,5 @@
+#include <cassert>
+
 #include "seal/seal.h"
 
 #include "psi.h"
@@ -62,6 +64,21 @@ size_t PSIParams::sender_bucket_capacity() {
     // TODO: fix this
     // see Table 1 in [CLR17]
     return 10;
+}
+
+void PSIParams::generate_seeds() {
+    seeds.clear();
+    auto random_factory = UniformRandomGeneratorFactory::default_factory();
+    auto random = random_factory->create();
+
+    for (size_t i = 0; i < hash_functions(); i++) {
+        seeds.push_back(random_bits(random, 64));
+    }
+}
+
+void PSIParams::set_seeds(vector<uint64_t> &seeds_ext) {
+    assert(seeds_ext.size() == hash_functions());
+    seeds = seeds_ext;
 }
 
 PSIReceiver::PSIReceiver(PSIParams &params)

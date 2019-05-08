@@ -17,6 +17,7 @@ int main()
 
     // step 1: agreeing on parameters.
     PSIParams params(receiver_inputs.size(), sender_inputs.size(), 20);
+    params.generate_seeds();
 
     // step 2: receiver generates keys and inputs with the keys
     PSIReceiver user(params);

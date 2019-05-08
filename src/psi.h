@@ -9,14 +9,17 @@ class PSIParams
 public:
     PSIParams(size_t receiver_size, size_t sender_size, size_t input_bits);
     size_t hash_functions();
-    size_t input_hashed_bits();
     size_t bucket_count_log();
     size_t sender_bucket_capacity();
+    // you *must* call either generate_seeds or set_seeds.
+    void generate_seeds();
+    void set_seeds(vector<uint64_t> &seeds_ext);
 
     size_t receiver_size;
     size_t sender_size;
     size_t input_bits;
     shared_ptr<SEALContext> context;
+    vector<uint64_t> seeds;
 };
 
 class PSIReceiver
