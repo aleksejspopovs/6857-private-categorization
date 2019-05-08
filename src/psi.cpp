@@ -26,10 +26,47 @@ void encode_const_vector(BatchEncoder &encoder, uint64_t value, Plaintext &desti
     encoder.encode(destination);
 }
 
-PSIReceiver::PSIReceiver(shared_ptr<SEALContext> context, size_t input_bits)
-    : context(context),
-      input_bits(input_bits),
-      keygen(context),
+PSIParams::PSIParams(size_t receiver_size, size_t sender_size, size_t input_bits)
+    : receiver_size(receiver_size),
+      sender_size(sender_size),
+      input_bits(input_bits)
+{
+    EncryptionParameters parms(scheme_type::BFV);
+    parms.set_poly_modulus_degree(8192);
+    parms.set_coeff_modulus(DefaultParams::coeff_modulus_128(8192));
+    // for batching to work, the plain modulus must be a prime that's equal
+    // to 1 mod (2 * poly_modulus_degree).
+    // TODO: choose this optimally (it should be a little over
+    // 2^(input_bits - bucket_count_log() + 2)).
+    parms.set_plain_modulus((8192 * 2 * 4) + 1);
+    context = SEALContext::Create(parms);
+}
+
+size_t PSIParams::hash_functions() {
+    return 3;
+}
+
+size_t PSIParams::bucket_count_log() {
+    // we want to have a number of buckets that is a power of two and a little
+    // bigger than receiver_size, so let's output ceil(log2(receiver_size)) + 1
+    // (so we'll have between 2x and 4x buckets).
+    size_t result = 0;
+    while ((1ul << result) < receiver_size) {
+        result++;
+    }
+
+    return result + 1;
+}
+
+size_t PSIParams::sender_bucket_capacity() {
+    // TODO: fix this
+    // see Table 1 in [CLR17]
+    return 10;
+}
+
+PSIReceiver::PSIReceiver(PSIParams &params)
+    : params(params),
+      keygen(params.context),
       public_key_(keygen.public_key()),
       secret_key(keygen.secret_key())
 {
@@ -40,8 +77,8 @@ PSIReceiver::PSIReceiver(shared_ptr<SEALContext> context, size_t input_bits)
 
 vector<Ciphertext> PSIReceiver::encrypt_inputs(vector<uint64_t> &inputs)
 {
-    Encryptor encryptor(context, public_key_);
-    BatchEncoder encoder(context);
+    Encryptor encryptor(params.context, public_key_);
+    BatchEncoder encoder(params.context);
     size_t slot_count = encoder.slot_count();
 
     // each ciphertext will encode (at most) slot_count inputs, so we'll
@@ -75,8 +112,8 @@ vector<Ciphertext> PSIReceiver::encrypt_inputs(vector<uint64_t> &inputs)
 
 vector<size_t> PSIReceiver::decrypt_matches(vector<Ciphertext> &encrypted_matches)
 {
-    Decryptor decryptor(context, secret_key);
-    BatchEncoder encoder(context);
+    Decryptor decryptor(params.context, secret_key);
+    BatchEncoder encoder(params.context);
     size_t slot_count = encoder.slot_count();
 
     vector<size_t> result;
@@ -113,11 +150,9 @@ RelinKeys PSIReceiver::relin_keys()
     return keygen.relin_keys(5);
 }
 
-PSISender::PSISender(shared_ptr<SEALContext> context, size_t input_bits)
-    : context(context),
-      input_bits(input_bits)
-{
-}
+PSISender::PSISender(PSIParams &params)
+    : params(params)
+{}
 
 vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
                                               PublicKey& receiver_public_key,
@@ -129,13 +164,13 @@ vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
     auto random_factory = UniformRandomGeneratorFactory::default_factory();
     auto random = random_factory->create();
 
-    uint64_t plain_modulus = context->context_data()->parms().plain_modulus().value();
+    uint64_t plain_modulus = params.context->context_data()->parms().plain_modulus().value();
 
-    Encryptor encryptor(context, receiver_public_key);
-    BatchEncoder encoder(context);
+    Encryptor encryptor(params.context, receiver_public_key);
+    BatchEncoder encoder(params.context);
     size_t slot_count = encoder.slot_count();
 
-    Evaluator evaluator(context);
+    Evaluator evaluator(params.context);
 
     // compute the coefficients of the polynomial f(x) = \prod_i (x - inputs[i])
     vector<uint64_t> f_coeffs = polynomial_from_roots(inputs, plain_modulus);
@@ -166,7 +201,7 @@ vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
         result[i] = f_const_term_encrypted;
 
 #ifdef DEBUG
-        Decryptor decryptor(context, *receiver_key_leaked);
+        Decryptor decryptor(params.context, *receiver_key_leaked);
         cerr << "computing matches for receiver batch #" << i << endl;
         cerr << "initially the noise budget is " << decryptor.invariant_noise_budget(result[i]) << endl;
 #endif

@@ -4,18 +4,32 @@
 using namespace std;
 using namespace seal;
 
+class PSIParams
+{
+public:
+    PSIParams(size_t receiver_size, size_t sender_size, size_t input_bits);
+    size_t hash_functions();
+    size_t input_hashed_bits();
+    size_t bucket_count_log();
+    size_t sender_bucket_capacity();
+
+    size_t receiver_size;
+    size_t sender_size;
+    size_t input_bits;
+    shared_ptr<SEALContext> context;
+};
+
 class PSIReceiver
 {
 public:
-    PSIReceiver(shared_ptr<SEALContext> context, size_t input_bits);
+    PSIReceiver(PSIParams &params);
     vector<Ciphertext> encrypt_inputs(vector<uint64_t> &inputs);
     vector<size_t> decrypt_matches(vector<Ciphertext> &encrypted_matches);
     PublicKey& public_key();
     RelinKeys relin_keys();
 
 private:
-    shared_ptr<SEALContext> context;
-    size_t input_bits;
+    PSIParams &params;
     KeyGenerator keygen;
     PublicKey public_key_;
     SecretKey secret_key;
@@ -24,13 +38,12 @@ private:
 class PSISender
 {
 public:
-    PSISender(shared_ptr<SEALContext> context, size_t input_bits);
+    PSISender(PSIParams &params);
     vector<Ciphertext> compute_matches(vector<uint64_t> &inputs,
                                        PublicKey& receiver_public_key,
                                        RelinKeys relin_keys,
                                        vector<Ciphertext> &receiver_inputs);
 
 private:
-    shared_ptr<SEALContext> context;
-    size_t input_bits;
+    PSIParams &params;
 };
