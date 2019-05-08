@@ -5,7 +5,9 @@
 
 #include "random.h"
 
-const pair<uint64_t, size_t> BUCKET_EMPTY = make_pair(0xFFFFFFFFFFFFFFFFull, 0xFFFFFFFFul);
+typedef pair<uint64_t, size_t> bucket_slot;
+
+const bucket_slot BUCKET_EMPTY = make_pair(0xFFFFFFFFFFFFFFFFull, 0xFFFFFFFFul);
 
 /* Given a set of inputs, a number of buckets, and seeds for a hash function,
    performs permutation-based cuckoo hashing to put at most one element in each
@@ -20,7 +22,7 @@ const pair<uint64_t, size_t> BUCKET_EMPTY = make_pair(0xFFFFFFFFFFFFFFFFull, 0xF
 bool cuckoo_hash(shared_ptr<UniformRandomGenerator> random,
                  vector<uint64_t> &inputs,
                  size_t m,
-                 vector<pair<uint64_t, size_t>> &buckets,
+                 vector<bucket_slot> &buckets,
                  vector<uint64_t> &seeds);
 
 /* Given a set of inputs, a number of buckets, and seeds for a hash function,
@@ -35,5 +37,5 @@ bool complete_hash(shared_ptr<UniformRandomGenerator> random,
                    vector<uint64_t> &inputs,
                    size_t m,
                    size_t capacity,
-                   vector<pair<uint64_t, size_t>> &buckets,
+                   vector<bucket_slot> &buckets,
                    vector<uint64_t> &seeds);

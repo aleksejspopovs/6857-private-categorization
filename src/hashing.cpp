@@ -19,7 +19,7 @@ size_t loc_aes_hash(AES &aes, size_t m, uint64_t value) {
 bool cuckoo_hash(shared_ptr<UniformRandomGenerator> random,
 	             vector<uint64_t> &inputs,
 	             size_t m,
-	             vector<pair<uint64_t, size_t>> &buckets,
+	             vector<bucket_slot> &buckets,
 	             vector<uint64_t> &seeds)
 {
 	assert(buckets.size() == (1 << m));
@@ -31,7 +31,7 @@ bool cuckoo_hash(shared_ptr<UniformRandomGenerator> random,
 
 	for (uint64_t s : inputs) {
 		bool resolved = false;
-		pair<uint64_t, size_t> current_item = make_pair(
+		bucket_slot current_item = make_pair(
 			s,
 			random_integer(random, seeds.size())
 		);
@@ -60,7 +60,7 @@ bool complete_hash(shared_ptr<UniformRandomGenerator> random,
 	               vector<uint64_t> &inputs,
                    size_t m,
                    size_t capacity,
-                   vector<pair<uint64_t, size_t>> &buckets,
+                   vector<bucket_slot> &buckets,
                    vector<uint64_t> &seeds)
 {
 	assert(buckets.size() == capacity << m);
@@ -86,6 +86,8 @@ bool complete_hash(shared_ptr<UniformRandomGenerator> random,
 			// to do so, pick a number slot_index in 0..(current capacity - 1)
 			// and traverse the bucket looking for the slot_indexth unoccupied
 			// slot.
+			// TODO: optimize this by first inserting deterministically, then
+			// shuffling each bucket.
 			size_t slot_index = random_integer(random, capacity - capacity_used[loc]);
 			for (size_t j = 0; j < capacity; j++) {
 				if (buckets[capacity * loc + j] == BUCKET_EMPTY) {
