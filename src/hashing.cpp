@@ -55,3 +55,50 @@ bool cuckoo_hash(shared_ptr<UniformRandomGenerator> random,
 
 	return true;
 }
+
+bool complete_hash(shared_ptr<UniformRandomGenerator> random,
+	               vector<uint64_t> &inputs,
+                   size_t m,
+                   size_t capacity,
+                   vector<pair<uint64_t, size_t>> &buckets,
+                   vector<uint64_t> &seeds)
+{
+	assert(buckets.size() == capacity << m);
+
+	vector<AES> aes(seeds.size());
+	for (size_t i = 0; i < seeds.size(); i++) {
+		aes[i].set_key(0, seeds[i]);
+	}
+
+	vector<size_t> capacity_used(1 << m);
+
+	for (uint64_t s : inputs) {
+		for (size_t i = 0; i < seeds.size(); i++) {
+			size_t loc = loc_aes_hash(aes[i], m, s);
+
+			if (capacity_used[loc] == capacity) {
+				// all slots in the bucket are used, so we cannot add this
+				// element
+				return false;
+			}
+
+			// now we want to pick a random unoccupied slot in this bucket.
+			// to do so, pick a number slot_index in 0..(current capacity - 1)
+			// and traverse the bucket looking for the slot_indexth unoccupied
+			// slot.
+			size_t slot_index = random_integer(random, capacity - capacity_used[loc]);
+			for (size_t j = 0; j < capacity; j++) {
+				if (buckets[capacity * loc + j] == BUCKET_EMPTY) {
+					if (slot_index == 0) {
+						buckets[capacity * loc + j] = make_pair(s, i);
+						break;
+					}
+					slot_index--;
+				}
+			}
+			capacity_used[loc]++;
+		}
+	}
+
+	return true;
+}

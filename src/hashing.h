@@ -22,3 +22,18 @@ bool cuckoo_hash(shared_ptr<UniformRandomGenerator> random,
                  size_t m,
                  vector<pair<uint64_t, size_t>> &buckets,
                  vector<uint64_t> &seeds);
+
+/* Given a set of inputs, a number of buckets, and seeds for a hash function,
+   places every input, hashed with *every* function, into the corresponding
+   bucket, using permutation-based hashing.
+   The number of buckets must be 2^m, and the vector must have size
+   (2^m * capacity) and be initialized to BUCKET_EMPTY. jth element of bucket
+   number i is stored in buckets[i * capacity + j].
+   Seeds should be random 64-bit values.
+*/
+bool complete_hash(shared_ptr<UniformRandomGenerator> random,
+                   vector<uint64_t> &inputs,
+                   size_t m,
+                   size_t capacity,
+                   vector<pair<uint64_t, size_t>> &buckets,
+                   vector<uint64_t> &seeds);
