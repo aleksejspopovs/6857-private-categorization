@@ -36,6 +36,21 @@ PSIParams::PSIParams(size_t receiver_size, size_t sender_size, size_t input_bits
     context = SEALContext::Create(parms);
 }
 
+void PSIParams::generate_seeds() {
+    seeds.clear();
+    auto random_factory = UniformRandomGeneratorFactory::default_factory();
+    auto random = random_factory->create();
+
+    for (size_t i = 0; i < hash_functions(); i++) {
+        seeds.push_back(random_bits(random, 64));
+    }
+}
+
+void PSIParams::set_seeds(vector<uint64_t> &seeds_ext) {
+    assert(seeds_ext.size() == hash_functions());
+    seeds = seeds_ext;
+}
+
 size_t PSIParams::hash_functions() {
     return 3;
 }
@@ -76,20 +91,6 @@ uint64_t PSIParams::encode_bucket_element(bucket_slot &element, bool is_receiver
     }
 }
 
-void PSIParams::generate_seeds() {
-    seeds.clear();
-    auto random_factory = UniformRandomGeneratorFactory::default_factory();
-    auto random = random_factory->create();
-
-    for (size_t i = 0; i < hash_functions(); i++) {
-        seeds.push_back(random_bits(random, 64));
-    }
-}
-
-void PSIParams::set_seeds(vector<uint64_t> &seeds_ext) {
-    assert(seeds_ext.size() == hash_functions());
-    seeds = seeds_ext;
-}
 
 PSIReceiver::PSIReceiver(PSIParams &params)
     : params(params),
@@ -209,13 +210,18 @@ vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
 {
     assert(inputs.size() == params.sender_size);
 
-    vector<Ciphertext> result(receiver_inputs.size());
-
     auto random_factory = UniformRandomGeneratorFactory::default_factory();
     auto random = random_factory->create();
 
     uint64_t plain_modulus = params.context->context_data()->parms().plain_modulus().value();
 
+    Encryptor encryptor(params.context, receiver_public_key);
+    BatchEncoder encoder(params.context);
+    Evaluator evaluator(params.context);
+    size_t slot_count = encoder.slot_count();
+
+    // hash all of the sender's inputs, using every possible hash function, into
+    // a (capacity × bucket_count) hash table.
     size_t bucket_count_log = params.bucket_count_log();
     size_t bucket_count = (1 << bucket_count_log);
     size_t capacity = params.sender_bucket_capacity();
@@ -223,61 +229,58 @@ vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
     bool res = complete_hash(random, inputs, bucket_count_log, capacity, buckets, params.seeds);
     assert(res); // TODO: handle gracefully
 
-    Encryptor encryptor(params.context, receiver_public_key);
-    BatchEncoder encoder(params.context);
-    size_t slot_count = encoder.slot_count();
+    vector<Ciphertext> result(receiver_inputs.size());
 
-    Evaluator evaluator(params.context);
-
-    // for each bucket, compute the coefficients of the polynomial
-    // f(x) = \prod_{y in bucket} (x - y)
-    vector<vector<uint64_t>> f_coeffs(bucket_count);
-    vector<uint64_t> this_bucket(capacity);
-    for (size_t i = 0; i < bucket_count; i++) {
-        // TODO: rewrite polynomial_from_roots to take iterators to make this
-        // unnecessary
-        for (size_t j = 0; j < capacity; j++) {
-            this_bucket[j] = params.encode_bucket_element(buckets[i * capacity + j], false);
-        }
-
-        f_coeffs[i] = polynomial_from_roots(this_bucket, plain_modulus);
-    }
-
-    // now, for each 0 <= j <= capacity, encode a bunch of vectors
-    // corresponding to the jth coefficients of the corresponding polynomials
-    // ---one for each group of buckets batched into one ciphertext.
     size_t ciphertext_count = (bucket_count + (slot_count - 1)) / slot_count;
     assert(ciphertext_count == receiver_inputs.size());
 
-    Plaintext coeffs_grouped(slot_count, slot_count);
-    vector<vector<Plaintext>> f_coeffs_enc(ciphertext_count);
-    for (size_t i = 0; i < ciphertext_count; i++) {
-        // figure out how many coefficients we'll be putting into this
-        // vector: this is slot_count for all blocks except the last one
-        size_t coeffs_here = (i < ciphertext_count - 1)
-                             ? slot_count
-                             : (bucket_count % slot_count);
-
-        coeffs_grouped.resize(coeffs_here);
-        for (size_t j = 0; j < capacity + 1; j++) {
-            for (size_t k = 0; k < coeffs_here; k++) {
-                coeffs_grouped[k] = f_coeffs[slot_count * i + k][j];
-            }
-
-            encoder.encode(coeffs_grouped);
-            f_coeffs_enc[i].push_back(coeffs_grouped);
-        }
-    }
-
-    // encrypt the constant terms of the polynomials and put them in result[i],
-    // so that the other terms can be added to them.
-    for (size_t i = 0; i < ciphertext_count; i++) {
-        encryptor.encrypt(f_coeffs_enc[i][0], result[i]);
-    }
-
+    // these are auxiliary vectors that we use for each batch of receiver
+    // inputs, so we declare them here to avoid allocating them anew in every
+    // iteration.
+    vector<uint64_t> current_bucket(capacity);
+    vector<vector<uint64_t>> f_coeffs(slot_count);
+    vector<Plaintext> f_coeffs_enc(capacity + 1);
     vector<Ciphertext> powers(capacity + 1);
 
-    for (size_t i = 0; i < receiver_inputs.size(); i++) {
+    for (size_t i = 0; i < ciphertext_count; i++) {
+        // figure out how many buckets are encoded in this ciphertext:
+        // this is slot_count for all ciphertexts except the last one.
+        size_t buckets_here = (i < ciphertext_count - 1)
+                              ? slot_count
+                              : (bucket_count % slot_count);
+
+        // for each bucket, compute the coefficients of the polynomial
+        // f(x) = \prod_{y in bucket} (x - y)
+        for (size_t j = 0; j < buckets_here; j++) {
+            // TODO: rewrite polynomial_from_roots to take iterators to make this
+            // unnecessary
+            for (size_t k = 0; k < capacity; k++) {
+                current_bucket[k] = params.encode_bucket_element(
+                    buckets[(slot_count * i + j) * capacity + k],
+                    false
+                );
+            }
+
+            f_coeffs[j] = polynomial_from_roots(current_bucket, plain_modulus);
+        }
+
+        // now that we have the polynomials, encode the coefficients of all
+        // polynomials into vectors, grouped by degree (so if a[i, j] is the
+        // j-th coefficient of polynomial i, we want vectors
+        // [a[0, j], a[1, j], ...] for each j).
+        // this is basically just the transpose of f_coeffs, but also run
+        // through the batch encoder.
+        for (size_t j = 0; j < capacity + 1; j++) {
+            f_coeffs_enc[j].resize(buckets_here);
+            for (size_t k = 0; k < buckets_here; k++) {
+                f_coeffs_enc[j][k] = f_coeffs[slot_count * i + k][j];
+            }
+
+            encoder.encode(f_coeffs_enc[j]);
+        }
+
+        // we are now done with sender's precomputation. now we can actually
+        // evaluate the polynomial on the receiver's input.
         // first, compute all the powers of the receiver's input
         // NB: powers[0] is undefined!
         powers[1] = receiver_inputs[i];
@@ -290,9 +293,9 @@ vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
             evaluator.relinearize_inplace(powers[j], relin_keys);
         }
 
-        // now use the computed powers to evaluate f(input)
-        // recall that the const terms of the polynomials are already in
-        // result[i].
+        // now use the computed powers to evaluate f(input).
+        // first, encrypt the constant term directly into the result.
+        encryptor.encrypt(f_coeffs_enc[0], result[i]);
 
 #ifdef DEBUG
         Decryptor decryptor(params.context, *receiver_key_leaked);
@@ -300,12 +303,13 @@ vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
         cerr << "initially the noise budget is " << decryptor.invariant_noise_budget(result[i]) << endl;
 #endif
 
-        for (size_t j = 1; j < f_coeffs_enc[i].size(); j++) {
-            // term = receiver_inputs[i]^j * f_coeffs[i][j]
+        // now compute the rest of the terms and add them into the result.
+        for (size_t j = 1; j < capacity + 1; j++) {
+            // term = receiver_inputs[i]^j * f_coeffs_enc[j]
             Ciphertext term;
             // multiply_plain does not allow the second parameter to be zero.
-            if (!f_coeffs_enc[i][j].is_zero()) {
-                evaluator.multiply_plain(powers[j], f_coeffs_enc[i][j], term);
+            if (!f_coeffs_enc[j].is_zero()) {
+                evaluator.multiply_plain(powers[j], f_coeffs_enc[j], term);
                 evaluator.relinearize_inplace(term, relin_keys);
                 evaluator.add_inplace(result[i], term);
             }
