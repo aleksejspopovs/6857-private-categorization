@@ -16,12 +16,12 @@ them strategically to minimize the number of multiplications that B will have
 to perform.
 
 This class implements a windowing optimization described in [CLR17] that is
-parametrized over a *window size* l and maximum power m, and requires A to send
-over the values y^{2^{l * i} * j} for each 0 <= i <= ceil(log2(P) / l) and
+parametrized over a window size l and maximum power m, and requires A to send
+over the values y^{2^{l * i} * j} for each 0 <= i <= ceil(log2(m) / l) and
 1 <= j <= 2^l - 1.
 
 Additionally, we implement the special case l = 0 that does not use windowing
-and only sends over 0.
+and only sends over y.
 */
 
 class Windowing
