@@ -4,8 +4,9 @@
 #include "seal/seal.h"
 
 #include "hashing.h"
-#include "polynomials.cpp"
+#include "polynomials.h"
 #include "random.h"
+#include "windowing.h"
 
 #include "psi.h"
 
@@ -28,11 +29,7 @@ PSIParams::PSIParams(size_t receiver_size, size_t sender_size, size_t input_bits
     EncryptionParameters parms(scheme_type::BFV);
     parms.set_poly_modulus_degree(8192 * 2);
     parms.set_coeff_modulus(DefaultParams::coeff_modulus_128(8192 * 2));
-    // for batching to work, the plain modulus must be a prime that's equal
-    // to 1 mod (2 * poly_modulus_degree).
-    // TODO: choose this optimally (it should be a little over
-    // 2^(input_bits - bucket_count_log() + 2)).
-    parms.set_plain_modulus((8192 * 2 * 4) + 1);
+    parms.set_plain_modulus(plain_modulus());
     context = SEALContext::Create(parms);
 }
 
@@ -49,6 +46,14 @@ void PSIParams::generate_seeds() {
 void PSIParams::set_seeds(vector<uint64_t> &seeds_ext) {
     assert(seeds_ext.size() == hash_functions());
     seeds = seeds_ext;
+}
+
+uint64_t PSIParams::plain_modulus() {
+    // for batching to work, the plain modulus must be a prime that's equal
+    // to 1 mod (2 * poly_modulus_degree).
+    // TODO: choose this optimally (it should be a little over
+    // 2^(input_bits - bucket_count_log() + 2)).
+    return (8192 * 2 * 4) + 1;
 }
 
 size_t PSIParams::hash_functions() {
@@ -70,11 +75,15 @@ size_t PSIParams::bucket_count_log() {
 size_t PSIParams::sender_bucket_capacity() {
     // TODO: fix this
     // see Table 1 in [CLR17]
-    return 10;
+    return 20;
 }
 
 size_t PSIParams::sender_partition_size() {
-    return 2;
+    return 5;
+}
+
+size_t PSIParams::window_size() {
+    return 1;
 }
 
 uint64_t PSIParams::encode_bucket_element(bucket_slot &element, bool is_receiver) {
@@ -107,7 +116,7 @@ PSIReceiver::PSIReceiver(PSIParams &params)
 #endif
 }
 
-vector<Ciphertext> PSIReceiver::encrypt_inputs(vector<uint64_t> &inputs)
+vector<vector<Ciphertext>> PSIReceiver::encrypt_inputs(vector<uint64_t> &inputs)
 {
     assert(inputs.size() == params.receiver_size);
 
@@ -120,35 +129,35 @@ vector<Ciphertext> PSIReceiver::encrypt_inputs(vector<uint64_t> &inputs)
     auto random_factory = UniformRandomGeneratorFactory::default_factory();
     auto random = random_factory->create();
 
+    uint64_t plain_modulus = params.plain_modulus();
+
     size_t bucket_count_log = params.bucket_count_log();
     size_t bucket_count = 1 << bucket_count_log;
     vector<bucket_slot> buckets(bucket_count, BUCKET_EMPTY);
     bool res = cuckoo_hash(random, inputs, bucket_count_log, buckets, params.seeds);
     assert(res); // TODO: handle gracefully
 
-    // each ciphertext will encode (at most) slot_count buckets, so we'll
-    // need ceil(m / slot_count) ciphertexts.
-    size_t ciphertext_count = (bucket_count + (slot_count - 1)) / slot_count;
-    vector<Ciphertext> result(ciphertext_count);
+    // each block will encode (at most) slot_count buckets, so we'll
+    // need ceil(m / slot_count) blocks.
+    size_t block_count = (bucket_count + (slot_count - 1)) / slot_count;
 
-    Plaintext buckets_grouped(slot_count, slot_count);
+    vector<uint64_t> buckets_grouped(slot_count);
+    vector<vector<Ciphertext>> result(block_count);
+    Windowing windowing(params.window_size(), params.sender_partition_size());
 
-    for (size_t i = 0; i < ciphertext_count; i++) {
-        // figure out how many buckets we'll be putting into this ciphertext:
+    for (size_t block = 0; block < block_count; block++) {
+        // figure out how many buckets we'll be putting into this block:
         // this is slot_count for all blocks except the last one
-        size_t buckets_here = (i < ciphertext_count - 1)
+        size_t buckets_here = (block < block_count - 1)
                               ? slot_count
                               : (bucket_count % slot_count);
 
         buckets_grouped.resize(buckets_here);
-        for (size_t j = 0; j < buckets_here; j++) {
-            buckets_grouped[j] = params.encode_bucket_element(buckets[slot_count * i + j], true);
+        for (size_t i = 0; i < buckets_here; i++) {
+            buckets_grouped[i] = params.encode_bucket_element(buckets[slot_count * block + i], true);
         }
 
-        // encode all of the buckets, in-place
-        encoder.encode(buckets_grouped);
-
-        encryptor.encrypt(buckets_grouped, result[i]);
+        windowing.prepare(buckets_grouped, result[block], plain_modulus, encoder, encryptor);
     }
 
     // after completing the protocol, the receiver will learn which locations
@@ -215,14 +224,14 @@ PSISender::PSISender(PSIParams &params)
 vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
                                               PublicKey& receiver_public_key,
                                               RelinKeys relin_keys,
-                                              vector<Ciphertext> &receiver_inputs)
+                                              vector<vector<Ciphertext>> &receiver_inputs)
 {
     assert(inputs.size() == params.sender_size);
 
     auto random_factory = UniformRandomGeneratorFactory::default_factory();
     auto random = random_factory->create();
 
-    uint64_t plain_modulus = params.context->context_data()->parms().plain_modulus().value();
+    uint64_t plain_modulus = params.plain_modulus();
 
     Encryptor encryptor(params.context, receiver_public_key);
     BatchEncoder encoder(params.context);
@@ -238,12 +247,14 @@ vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
     bool res = complete_hash(random, inputs, bucket_count_log, capacity, buckets, params.seeds);
     assert(res); // TODO: handle gracefully
 
-    size_t ciphertext_count = (bucket_count + (slot_count - 1)) / slot_count;
-    assert(ciphertext_count == receiver_inputs.size());
-
     size_t partition_size = params.sender_partition_size();
     assert(capacity % partition_size == 0);
     size_t partition_count = capacity / partition_size;
+
+    Windowing windowing(params.window_size(), params.sender_partition_size());
+
+    size_t block_count = (bucket_count + (slot_count - 1)) / slot_count;
+    assert(receiver_inputs.size() == block_count);
 
     vector<Ciphertext> result(receiver_inputs.size() * partition_count);
 
@@ -255,22 +266,13 @@ vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
     vector<Plaintext> f_coeffs_enc(partition_size + 1);
     vector<Ciphertext> powers(partition_size + 1);
 
-    for (size_t i = 0; i < ciphertext_count; i++) {
+    for (size_t i = 0; i < block_count; i++) {
         // compute all the powers of the receiver's input.
-        // NB: powers[0] is undefined!
-        powers[1] = receiver_inputs[i];
-        for (size_t j = 2; j < powers.size(); j++) {
-            if (j & 2 == 0) {
-                evaluator.square(powers[j >> 1], powers[j]);
-            } else {
-                evaluator.multiply(powers[j - 1], powers[1], powers[j]);
-            }
-            evaluator.relinearize_inplace(powers[j], relin_keys);
-        }
+        windowing.compute_powers(receiver_inputs[i], powers, evaluator, relin_keys);
 
         // figure out how many buckets are encoded in this ciphertext:
-        // this is slot_count for all ciphertexts except the last one.
-        size_t buckets_here = (i < ciphertext_count - 1)
+        // this is `slot_count` for all ciphertexts except the last one.
+        size_t buckets_here = (i < block_count - 1)
                               ? slot_count
                               : (bucket_count % slot_count);
 

@@ -1,26 +1,24 @@
-#include <vector>
+#include "polynomials.h"
 
-using namespace std;
+uint64_t modexp(uint64_t base, uint64_t exponent, uint64_t modulus) {
+    uint64_t result = 1;
+    while (exponent > 0) {
+        if (exponent & 1) {
+            result = (result * base) % modulus;
+        }
+        base = (base * base) % modulus;
+        exponent = (exponent >> 1);
+    }
+    return result;
+}
 
-/*
-The functions in this file implement some operations on polynomials, interpreted
-as vectors of coefficients.
-*/
-
-/*
-polynomial_from_roots(l) returns the coefficients of the polynomial
-(x - l[0]) * (x - l[1]) * ...
-
-time complexity: O(n²), where n is the size of l
-*/
-template <typename T>
-std::vector<T> polynomial_from_roots(std::vector<T> &roots, T modulus) {
-    std::vector<T> result(roots.size() + 1, 0);
+vector<uint64_t> polynomial_from_roots(vector<uint64_t> &roots, uint64_t modulus) {
+    vector<uint64_t> result(roots.size() + 1, 0);
     result[0] = 1;
 
     for (size_t i = 0; i < roots.size(); i++) {
         // multiply result by (x - root)
-        T neg_root = modulus - (roots[i] % modulus);
+        uint64_t neg_root = modulus - (roots[i] % modulus);
 
         for (size_t j = i + 1; j > 0; j--) {
             result[j] = (result[j - 1] + neg_root * result[j]) % modulus;

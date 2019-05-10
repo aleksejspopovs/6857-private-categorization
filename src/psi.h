@@ -14,10 +14,12 @@ public:
     void generate_seeds();
     void set_seeds(vector<uint64_t> &seeds_ext);
 
+    uint64_t plain_modulus();
     size_t hash_functions();
     size_t bucket_count_log();
     size_t sender_bucket_capacity();
     size_t sender_partition_size();
+    size_t window_size();
 
     uint64_t encode_bucket_element(bucket_slot &element, bool is_receiver);
 
@@ -32,7 +34,7 @@ class PSIReceiver
 {
 public:
     PSIReceiver(PSIParams &params);
-    vector<Ciphertext> encrypt_inputs(vector<uint64_t> &inputs);
+    vector<vector<Ciphertext>> encrypt_inputs(vector<uint64_t> &inputs);
     vector<size_t> decrypt_matches(vector<Ciphertext> &encrypted_matches);
     PublicKey& public_key();
     RelinKeys relin_keys();
@@ -51,7 +53,7 @@ public:
     vector<Ciphertext> compute_matches(vector<uint64_t> &inputs,
                                        PublicKey& receiver_public_key,
                                        RelinKeys relin_keys,
-                                       vector<Ciphertext> &receiver_inputs);
+                                       vector<vector<Ciphertext>> &receiver_inputs);
 
 private:
     PSIParams &params;
