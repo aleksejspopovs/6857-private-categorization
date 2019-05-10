@@ -4,10 +4,11 @@
 
 #include "windowing.h"
 
-// TODO: figure out
-// - if this works fine for corner cases, like small max_power
-// - if there are any off-by-one errors that cause us to output more powers
-//   than necessary
+// TODO:
+// - figure out if there are any off-by-one errors that cause us to output more
+//   powers than necessary
+// - figure out if it's worth outputting fewer powers in the last window
+// - optimize the early exits in compute_powers
 
 Windowing::Windowing(size_t window_size, size_t max_power)
     : window_size(window_size), max_power(max_power)
@@ -48,7 +49,7 @@ void Windowing::prepare(vector<uint64_t> &input,
         // throughout this loop, we maintain the following invariant
         // (where y denotes the initial input):
         // input = y^{2^{l * i}}
-        // input_mul = y^{2^{l * i} + j}
+        // input_mul = y^{2^{l * i} * j}
         input_mul = input;
         for (size_t j = 1; j <= window_width; j++) {
             encoder.encode(input_mul, encoded);
@@ -93,7 +94,10 @@ void Windowing::compute_powers(vector<Ciphertext> &windows,
     } else {
         assert(windows.size() == window_width * window_count);
         // the first 2^l - 1 powers are directly copied over
-        for (size_t i = 1; i <= window_size; i++) {
+        for (size_t i = 1; i <= window_width; i++) {
+            if (i >= powers.size()) {
+                return;
+            }
             powers[i] = windows[i - 1];
         }
 
@@ -104,6 +108,9 @@ void Windowing::compute_powers(vector<Ciphertext> &windows,
                 // form y^{2^{l * i} * j + k}, where k < 2^{l * i} (equivalently,
                 // y^k was computed before we started working on window i).
                 size_t high_bits = (j << (window_size * i));
+                if (high_bits >= powers.size()) {
+                    break;
+                }
                 powers[high_bits] = windows[i * window_width + j - 1];
                 for (size_t low_bits = 1; low_bits < (1ull << (window_size * i)); low_bits++) {
                     size_t new_power = high_bits | low_bits;
