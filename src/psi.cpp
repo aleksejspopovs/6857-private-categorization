@@ -73,6 +73,10 @@ size_t PSIParams::sender_bucket_capacity() {
     return 10;
 }
 
+size_t PSIParams::sender_partition_size() {
+    return 2;
+}
+
 uint64_t PSIParams::encode_bucket_element(bucket_slot &element, bool is_receiver) {
     if (element != BUCKET_EMPTY) {
         // we need to encode:
@@ -170,18 +174,23 @@ vector<size_t> PSIReceiver::decrypt_matches(vector<Ciphertext> &encrypted_matche
 
     size_t bucket_count = (1 << params.bucket_count_log());
 
+    size_t partition_size = params.sender_partition_size();
+    size_t partition_count = params.sender_bucket_capacity() / params.sender_partition_size();
+
     vector<size_t> result;
 
+    Plaintext decrypted;
     for (size_t i = 0; i < encrypted_matches.size(); i++) {
-        Plaintext decrypted;
-        decryptor.decrypt(encrypted_matches[i], decrypted);
+        // because of partitioning, every `partition_count` elements of the
+        // sender's correspond to the same block sent by the receiver.
+        size_t block = i / partition_count;
 
-        // decode in-place
+        decryptor.decrypt(encrypted_matches[i], decrypted);
         encoder.decode(decrypted);
 
-        for (size_t j = 0; (j < slot_count) && (slot_count * i + j < bucket_count); j++) {
+        for (size_t j = 0; (j < slot_count) && (slot_count * block + j < bucket_count); j++) {
             if (decrypted[j] == 0) {
-                result.push_back(slot_count * i + j);
+                result.push_back(slot_count * block + j);
             }
         }
     }
@@ -229,59 +238,25 @@ vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
     bool res = complete_hash(random, inputs, bucket_count_log, capacity, buckets, params.seeds);
     assert(res); // TODO: handle gracefully
 
-    vector<Ciphertext> result(receiver_inputs.size());
-
     size_t ciphertext_count = (bucket_count + (slot_count - 1)) / slot_count;
     assert(ciphertext_count == receiver_inputs.size());
+
+    size_t partition_size = params.sender_partition_size();
+    assert(capacity % partition_size == 0);
+    size_t partition_count = capacity / partition_size;
+
+    vector<Ciphertext> result(receiver_inputs.size() * partition_count);
 
     // these are auxiliary vectors that we use for each batch of receiver
     // inputs, so we declare them here to avoid allocating them anew in every
     // iteration.
-    vector<uint64_t> current_bucket(capacity);
+    vector<uint64_t> current_bucket(partition_size);
     vector<vector<uint64_t>> f_coeffs(slot_count);
-    vector<Plaintext> f_coeffs_enc(capacity + 1);
-    vector<Ciphertext> powers(capacity + 1);
+    vector<Plaintext> f_coeffs_enc(partition_size + 1);
+    vector<Ciphertext> powers(partition_size + 1);
 
     for (size_t i = 0; i < ciphertext_count; i++) {
-        // figure out how many buckets are encoded in this ciphertext:
-        // this is slot_count for all ciphertexts except the last one.
-        size_t buckets_here = (i < ciphertext_count - 1)
-                              ? slot_count
-                              : (bucket_count % slot_count);
-
-        // for each bucket, compute the coefficients of the polynomial
-        // f(x) = \prod_{y in bucket} (x - y)
-        for (size_t j = 0; j < buckets_here; j++) {
-            // TODO: rewrite polynomial_from_roots to take iterators to make this
-            // unnecessary
-            for (size_t k = 0; k < capacity; k++) {
-                current_bucket[k] = params.encode_bucket_element(
-                    buckets[(slot_count * i + j) * capacity + k],
-                    false
-                );
-            }
-
-            f_coeffs[j] = polynomial_from_roots(current_bucket, plain_modulus);
-        }
-
-        // now that we have the polynomials, encode the coefficients of all
-        // polynomials into vectors, grouped by degree (so if a[i, j] is the
-        // j-th coefficient of polynomial i, we want vectors
-        // [a[0, j], a[1, j], ...] for each j).
-        // this is basically just the transpose of f_coeffs, but also run
-        // through the batch encoder.
-        for (size_t j = 0; j < capacity + 1; j++) {
-            f_coeffs_enc[j].resize(buckets_here);
-            for (size_t k = 0; k < buckets_here; k++) {
-                f_coeffs_enc[j][k] = f_coeffs[slot_count * i + k][j];
-            }
-
-            encoder.encode(f_coeffs_enc[j]);
-        }
-
-        // we are now done with sender's precomputation. now we can actually
-        // evaluate the polynomial on the receiver's input.
-        // first, compute all the powers of the receiver's input
+        // compute all the powers of the receiver's input.
         // NB: powers[0] is undefined!
         powers[1] = receiver_inputs[i];
         for (size_t j = 2; j < powers.size(); j++) {
@@ -293,42 +268,84 @@ vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
             evaluator.relinearize_inplace(powers[j], relin_keys);
         }
 
-        // now use the computed powers to evaluate f(input).
-        // first, encrypt the constant term directly into the result.
-        encryptor.encrypt(f_coeffs_enc[0], result[i]);
+        // figure out how many buckets are encoded in this ciphertext:
+        // this is slot_count for all ciphertexts except the last one.
+        size_t buckets_here = (i < ciphertext_count - 1)
+                              ? slot_count
+                              : (bucket_count % slot_count);
 
-#ifdef DEBUG
-        Decryptor decryptor(params.context, *receiver_key_leaked);
-        cerr << "computing matches for receiver batch #" << i << endl;
-        cerr << "initially the noise budget is " << decryptor.invariant_noise_budget(result[i]) << endl;
-#endif
+        // now we proceed to split the hash table into partitions: instead of
+        // looking at a hash table with `capacity` rows, imagine we're looking
+        // at `partition_count` hash tables of size `partition_size` each.
+        for (size_t partition = 0; partition < partition_count; partition++) {
+            // for each bucket, compute the coefficients of the polynomial
+            // f(x) = \prod_{y in bucket} (x - y)
+            for (size_t j = 0; j < buckets_here; j++) {
+                // TODO: rewrite polynomial_from_roots to take iterators to make this
+                // unnecessary
+                for (size_t k = 0; k < partition_size; k++) {
+                    current_bucket[k] = params.encode_bucket_element(
+                        buckets[(slot_count * i + j) * capacity + partition * partition_size + k],
+                        false
+                    );
+                }
 
-        // now compute the rest of the terms and add them into the result.
-        for (size_t j = 1; j < capacity + 1; j++) {
-            // term = receiver_inputs[i]^j * f_coeffs_enc[j]
-            Ciphertext term;
-            // multiply_plain does not allow the second parameter to be zero.
-            if (!f_coeffs_enc[j].is_zero()) {
-                evaluator.multiply_plain(powers[j], f_coeffs_enc[j], term);
-                evaluator.relinearize_inplace(term, relin_keys);
-                evaluator.add_inplace(result[i], term);
+                f_coeffs[j] = polynomial_from_roots(current_bucket, plain_modulus);
             }
 
-#ifdef DEBUG
-        cerr << "after term " << j << " it is " << decryptor.invariant_noise_budget(result[i]) << endl;
-#endif
-        }
+            // now that we have the polynomials, encode the coefficients of all
+            // polynomials into vectors, grouped by degree (so if a[i, j] is the
+            // j-th coefficient of polynomial i, we want vectors
+            // [a[0, j], a[1, j], ...] for each j).
+            // this is basically just the transpose of f_coeffs, but also run
+            // through the batch encoder.
+            for (size_t j = 0; j < partition_size + 1; j++) {
+                f_coeffs_enc[j].resize(buckets_here);
+                for (size_t k = 0; k < buckets_here; k++) {
+                    f_coeffs_enc[j][k] = f_coeffs[slot_count * i + k][j];
+                }
 
-        // now multiply the result of each computation by a random mask
-        Plaintext random_mask(slot_count, slot_count);
-        for (size_t j = 0; j < slot_count; j++) {
-            random_mask[j] = random_nonzero_integer(random, plain_modulus);
+                encoder.encode(f_coeffs_enc[j]);
+            }
+
+            // we are done with sender's precomputation. now we can actually
+            // evaluate the polynomial on the receiver's input.
+            // first, encrypt the constant term directly into the result.
+            encryptor.encrypt(f_coeffs_enc[0], result[i * partition_count + partition]);
+
+    #ifdef DEBUG
+            Decryptor decryptor(params.context, *receiver_key_leaked);
+            cerr << "computing matches for receiver batch #" << i << endl;
+            cerr << "initially the noise budget is " << decryptor.invariant_noise_budget(result[i * partition_count + partition]) << endl;
+    #endif
+
+            // now compute the rest of the terms and add them into the result.
+            for (size_t j = 1; j < partition_size + 1; j++) {
+                // term = receiver_inputs[i]^j * f_coeffs_enc[j]
+                Ciphertext term;
+                // multiply_plain does not allow the second parameter to be zero.
+                if (!f_coeffs_enc[j].is_zero()) {
+                    evaluator.multiply_plain(powers[j], f_coeffs_enc[j], term);
+                    evaluator.relinearize_inplace(term, relin_keys);
+                    evaluator.add_inplace(result[i * partition_count + partition], term);
+                }
+
+    #ifdef DEBUG
+            cerr << "after term " << j << " it is " << decryptor.invariant_noise_budget(result[i * partition_count + partition]) << endl;
+    #endif
+            }
+
+            // now multiply the result of each computation by a random mask
+            Plaintext random_mask(slot_count, slot_count);
+            for (size_t j = 0; j < slot_count; j++) {
+                random_mask[j] = random_nonzero_integer(random, plain_modulus);
+            }
+            encoder.encode(random_mask);
+            evaluator.multiply_plain_inplace(result[i * partition_count + partition], random_mask);
+            // since we're done computing on this, this relinearization is really
+            // only helpful to decrease communication costs
+            evaluator.relinearize_inplace(result[i * partition_count + partition], relin_keys);
         }
-        encoder.encode(random_mask);
-        evaluator.multiply_plain_inplace(result[i], random_mask);
-        // since we're done computing on this, this relinearization is really
-        // only helpful to decrease communication costs
-        evaluator.relinearize_inplace(result[i], relin_keys);
     }
 
     return result;

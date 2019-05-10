@@ -17,6 +17,8 @@ public:
     size_t hash_functions();
     size_t bucket_count_log();
     size_t sender_bucket_capacity();
+    size_t sender_partition_size();
+
     uint64_t encode_bucket_element(bucket_slot &element, bool is_receiver);
 
     size_t receiver_size;
