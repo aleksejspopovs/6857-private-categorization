@@ -148,7 +148,7 @@ vector<vector<Ciphertext>> PSIReceiver::encrypt_inputs(vector<uint64_t> &inputs)
     for (size_t block = 0; block < block_count; block++) {
         // figure out how many buckets we'll be putting into this block:
         // this is slot_count for all blocks except the last one
-        size_t buckets_here = (block < block_count - 1)
+        size_t buckets_here = (block < block_count - 1) || (bucket_count % slot_count == 0)
                               ? slot_count
                               : (bucket_count % slot_count);
 
@@ -272,7 +272,7 @@ vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
 
         // figure out how many buckets are encoded in this ciphertext:
         // this is `slot_count` for all ciphertexts except the last one.
-        size_t buckets_here = (i < block_count - 1)
+        size_t buckets_here = (i < block_count - 1) || (bucket_count % slot_count == 0)
                               ? slot_count
                               : (bucket_count % slot_count);
 
