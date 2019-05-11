@@ -283,8 +283,6 @@ vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
             // for each bucket, compute the coefficients of the polynomial
             // f(x) = \prod_{y in bucket} (x - y)
             for (size_t j = 0; j < buckets_here; j++) {
-                // TODO: rewrite polynomial_from_roots to take iterators to make this
-                // unnecessary
                 for (size_t k = 0; k < partition_size; k++) {
                     current_bucket[k] = params.encode_bucket_element(
                         buckets[(slot_count * i + j) * capacity + partition * partition_size + k],
@@ -292,7 +290,7 @@ vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
                     );
                 }
 
-                f_coeffs[j] = polynomial_from_roots(current_bucket, plain_modulus);
+                polynomial_from_roots(current_bucket, f_coeffs[j], plain_modulus);
             }
 
             // now that we have the polynomials, encode the coefficients of all
