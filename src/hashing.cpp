@@ -72,6 +72,8 @@ bool complete_hash(shared_ptr<UniformRandomGenerator> random,
 
 	vector<size_t> capacity_used(1 << m);
 
+	// insert all elements into the table in a deterministic order (filling each
+	// bucket sequentially)
 	for (uint64_t s : inputs) {
 		for (size_t i = 0; i < seeds.size(); i++) {
 			size_t loc = loc_aes_hash(aes[i], m, s);
@@ -82,23 +84,19 @@ bool complete_hash(shared_ptr<UniformRandomGenerator> random,
 				return false;
 			}
 
-			// now we want to pick a random unoccupied slot in this bucket.
-			// to do so, pick a number slot_index in 0..(current capacity - 1)
-			// and traverse the bucket looking for the slot_indexth unoccupied
-			// slot.
-			// TODO: optimize this by first inserting deterministically, then
-			// shuffling each bucket.
-			size_t slot_index = random_integer(random, capacity - capacity_used[loc]);
-			for (size_t j = 0; j < capacity; j++) {
-				if (buckets[capacity * loc + j] == BUCKET_EMPTY) {
-					if (slot_index == 0) {
-						buckets[capacity * loc + j] = make_pair(s, i);
-						break;
-					}
-					slot_index--;
-				}
-			}
+			buckets[capacity * loc + capacity_used[loc]] = make_pair(s, i);
 			capacity_used[loc]++;
+		}
+	}
+
+	// now shuffle each bucket, to avoid leaking information about bucket load
+	// distribution through partitioning
+	for (size_t bucket = 0; bucket < (1 << m); bucket++) {
+		for (size_t slot = 1; slot < capacity; slot++) {
+			// uniformly pick a random slot before this one (possibly this
+			// very same one) and swap
+			size_t prev_slot = random_integer(random, slot + 1);
+			buckets[capacity * bucket + slot].swap(buckets[capacity * bucket + prev_slot]);
 		}
 	}
 
