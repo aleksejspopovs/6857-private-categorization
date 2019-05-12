@@ -61,7 +61,7 @@ void Windowing::prepare(vector<uint64_t> &input,
             if (j <= window_width - 1) {
                 // multiply input_mul by input for next iteration.
                 for (size_t k = 0; k < input.size(); k++) {
-                    input_mul[k] = (input_mul[k] * input[k]) % modulus;
+                    input_mul[k] = MUL_MOD(input_mul[k], input[k], modulus);
                 }
             }
         }

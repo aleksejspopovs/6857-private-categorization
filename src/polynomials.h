@@ -10,6 +10,17 @@ The functions in this file implement some operations on polynomials, interpreted
 as vectors of coefficients.
 */
 
+// if p is at most 32 bits, arithmetic modulo p can be implemented by directly
+// using 64-bit arithmetic and reducing mod p. but if it's bigger,
+// multiplication will overflow, so we have to use a slower multiplication
+// algorithm.
+#ifdef MODULUS_IS_SMALL
+    #define MUL_MOD(a, b, m) (((a)*(b)) % (m))
+#else
+    // using __uint128_t, which is a GCC-specific extension
+    #define MUL_MOD(a, b, m) ((((__uint128_t) (a)) * ((__uint128_t) (b))) % (m))
+#endif
+
 /* modexp(a, b, m) computes a^b mod m in O(log b) time. */
 uint64_t modexp(uint64_t base, uint64_t exponent, uint64_t modulus);
 
