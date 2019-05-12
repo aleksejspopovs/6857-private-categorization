@@ -402,11 +402,11 @@ vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
                 encryptor.encrypt(g_coeffs_enc[0], g_evaluated);
             }
 
-    #ifdef DEBUG_WITH_KEY_LEAK
+#ifdef DEBUG_WITH_KEY_LEAK
             Decryptor decryptor(params.context, *receiver_key_leaked);
             cerr << "computing matches for receiver batch #" << i << endl;
             cerr << "initially the noise budget is " << decryptor.invariant_noise_budget(f_evaluated) << endl;
-    #endif
+#endif
 
             // now compute the rest of the terms and add them into the result.
             for (size_t j = 1; j < partition_size + 1; j++) {
@@ -430,23 +430,36 @@ vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
                     evaluator.add_inplace(g_evaluated, term);
                 }
 
-    #ifdef DEBUG_WITH_KEY_LEAK
+#ifdef DEBUG_WITH_KEY_LEAK
             cerr << "after term " << j << " it is " << decryptor.invariant_noise_budget(f_evaluated) << endl;
-    #endif
+#endif
             }
 
             // for unlabeled PSI, return r * f(x)
             // for labeled PSI, return (r * f(x), r' * f(x) + g(x))
             // where r and r' are random.
             multiply_by_random_mask(f_evaluated, random, encoder, evaluator, relin_keys, plain_modulus);
+
+#ifdef DEBUG_WITH_KEY_LEAK
+            cerr << "after mask it is " << decryptor.invariant_noise_budget(f_evaluated) << endl;
+#endif
+
             if (labels.has_value()) {
                 result[2 * (i * partition_count + partition)] = f_evaluated;
 
                 multiply_by_random_mask(f_evaluated, random, encoder, evaluator, relin_keys, plain_modulus);
+
+#ifdef DEBUG_WITH_KEY_LEAK
+                cerr << "after second mask it is " << decryptor.invariant_noise_budget(f_evaluated) << endl;
+#endif
                 evaluator.add(
                     f_evaluated, g_evaluated,
                     result[2 * (i * partition_count + partition) + 1]
                 );
+
+#ifdef DEBUG_WITH_KEY_LEAK
+                cerr << "after final add it is " << decryptor.invariant_noise_budget(result[2 * (i * partition_count + partition) + 1]) << endl;
+#endif
             } else {
                 result[i * partition_count + partition] = f_evaluated;
             }

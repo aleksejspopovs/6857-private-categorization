@@ -19,6 +19,7 @@ set(
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native")
 
 add_executable(private_categorization main.cpp ${SOURCES})
+set_target_properties(private_categorization PROPERTIES COMPILE_FLAGS "-DDEBUG_WITH_KEY_LEAK")
 add_executable(pc_client client.cpp ${SOURCES})
 add_executable(pc_server server.cpp ${SOURCES})
 
