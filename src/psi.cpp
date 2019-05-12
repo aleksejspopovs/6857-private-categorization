@@ -102,6 +102,7 @@ size_t PSIParams::window_size() {
 }
 
 uint64_t PSIParams::encode_bucket_element(vector<uint64_t> &inputs, bucket_slot &element, bool is_receiver) {
+    uint64_t result;
     if (element != BUCKET_EMPTY) {
         // we need to encode:
         // - the input itself, except for the last bucket_count_log() bits
@@ -109,14 +110,16 @@ uint64_t PSIParams::encode_bucket_element(vector<uint64_t> &inputs, bucket_slot 
         // - the index of the hash function used to hash it into its bucket.
         //   this should be in [0, 1, 2]; index 3 is used for dummy elements.
         assert(element.second < 3);
-        return (((inputs[element.first] >> bucket_count_log()) << 2)
-                | (element.second));
+        result = (((inputs[element.first] >> bucket_count_log()) << 2)
+                  | (element.second));
     } else {
         // for the dummy element, we use a non-existent hash funcion index (3)
         // and 0 or 1 for the input depending on whether it's the sender or the]
         // receiver who needs a dummy.
-        return 3 | ((is_receiver ? 1 : 0) << 2);
+        result = 3 | ((is_receiver ? 1 : 0) << 2);
     }
+    assert(result < plain_modulus());
+    return result;
 }
 
 
