@@ -10,9 +10,7 @@
 
 #include "psi.h"
 
-#define DEBUG
-
-#ifdef DEBUG
+#ifdef DEBUG_WITH_KEY_LEAK
 // this code will only be compiled in debug mode.
 #include <iostream>
 // we save the receiver's key in a global variable, because it is helpful to
@@ -27,8 +25,8 @@ PSIParams::PSIParams(size_t receiver_size, size_t sender_size, size_t input_bits
       input_bits(input_bits)
 {
     EncryptionParameters parms(scheme_type::BFV);
-    parms.set_poly_modulus_degree(8192 * 2);
-    parms.set_coeff_modulus(DefaultParams::coeff_modulus_128(8192 * 2));
+    parms.set_poly_modulus_degree(8192);
+    parms.set_coeff_modulus(DefaultParams::coeff_modulus_128(8192));
     parms.set_plain_modulus(plain_modulus());
     context = SEALContext::Create(parms);
 }
@@ -111,7 +109,7 @@ PSIReceiver::PSIReceiver(PSIParams &params)
       public_key_(keygen.public_key()),
       secret_key(keygen.secret_key())
 {
-#ifdef DEBUG
+#ifdef DEBUG_WITH_KEY_LEAK
     receiver_key_leaked = &secret_key;
 #endif
 }
@@ -313,7 +311,7 @@ vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
             // first, encrypt the constant term directly into the result.
             encryptor.encrypt(f_coeffs_enc[0], result[i * partition_count + partition]);
 
-    #ifdef DEBUG
+    #ifdef DEBUG_WITH_KEY_LEAK
             Decryptor decryptor(params.context, *receiver_key_leaked);
             cerr << "computing matches for receiver batch #" << i << endl;
             cerr << "initially the noise budget is " << decryptor.invariant_noise_budget(result[i * partition_count + partition]) << endl;
@@ -330,7 +328,7 @@ vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
                     evaluator.add_inplace(result[i * partition_count + partition], term);
                 }
 
-    #ifdef DEBUG
+    #ifdef DEBUG_WITH_KEY_LEAK
             cerr << "after term " << j << " it is " << decryptor.invariant_noise_budget(result[i * partition_count + partition]) << endl;
     #endif
             }

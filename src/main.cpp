@@ -2,18 +2,38 @@
 
 #include "seal/seal.h"
 
+#define DEBUG_WITH_KEY_LEAK
 #include "psi.h"
+#include "random.h"
 
 using namespace std;
 using namespace seal;
 
 int main()
 {
-    vector<uint64_t> receiver_inputs = {0x11, 0x22, 0xca, 0xfe};
-    vector<uint64_t> sender_inputs = {0x02, 0x03, 0x04, 0x05, 0x22, 0xfe};
+    auto random_factory = UniformRandomGeneratorFactory::default_factory();
+    auto random = random_factory->create();
+
+    size_t receiver_N = 8;
+    size_t sender_N = 16;
+    size_t input_bits = 8;
+
+    vector<uint64_t> sender_inputs(sender_N);
+    for (size_t i = 0; i < sender_N; i++) {
+        sender_inputs[i] = random_bits(random, input_bits);
+    }
+
+    vector<uint64_t> receiver_inputs(receiver_N);
+    for (size_t i = 0; i < receiver_N; i++) {
+        if (random_integer(random, 100) < 70) {
+            receiver_inputs[i] = sender_inputs[random_integer(random, sender_N)];
+        } else {
+            receiver_inputs[i] = random_bits(random, input_bits);
+        }
+    }
 
     // step 1: agreeing on parameters.
-    PSIParams params(receiver_inputs.size(), sender_inputs.size(), 8);
+    PSIParams params(receiver_inputs.size(), sender_inputs.size(), input_bits);
     params.generate_seeds();
 
     cout << "Parameters chosen:" << endl;
@@ -71,7 +91,7 @@ int main()
     // (after having received the encrypted matches)
     auto receiver_matches = user.decrypt_matches(sender_matches);
 
-    cout << "Matches: ";
+    cout << receiver_matches.size() << " matches found: ";
     for (size_t i : receiver_matches) {
         if (i < receiver_inputs.size()) {
             cout << i << ":" << receiver_inputs[i] << " ";
