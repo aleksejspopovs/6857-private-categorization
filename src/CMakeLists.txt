@@ -19,7 +19,8 @@ set(
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native")
 
 add_executable(private_categorization main.cpp ${SOURCES})
-set_target_properties(private_categorization PROPERTIES COMPILE_FLAGS "-DDEBUG_WITH_KEY_LEAK")
+add_executable(private_categorization_debug_entropy main.cpp ${SOURCES})
+set_target_properties(private_categorization_debug_entropy PROPERTIES COMPILE_FLAGS "-DDEBUG_WITH_KEY_LEAK")
 add_executable(pc_client client.cpp ${SOURCES})
 add_executable(pc_server server.cpp ${SOURCES})
 
@@ -32,5 +33,6 @@ find_package(SEAL 3.2.0 EXACT REQUIRED)
 
 # Link Microsoft SEAL
 target_link_libraries(private_categorization SEAL::seal)
+target_link_libraries(private_categorization_debug_entropy SEAL::seal)
 target_link_libraries(pc_client SEAL::seal)
 target_link_libraries(pc_server SEAL::seal)
