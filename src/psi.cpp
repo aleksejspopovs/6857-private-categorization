@@ -334,9 +334,10 @@ vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
         for (size_t partition = 0; partition < partition_count; partition++) {
             // for each bucket, compute the coefficients of the polynomial
             // f(x) = \prod_{y in bucket} (x - y)
-            // optionally, also compute coeffs of g(x), which has the property]
+            // optionally, also compute coeffs of g(x), which has the property
             // g(y) = label(y) for each y in bucket.
             for (size_t j = 0; j < buckets_here; j++) {
+                current_bucket.resize(partition_size);
                 for (size_t k = 0; k < partition_size; k++) {
                     current_bucket[k] = params.encode_bucket_element(
                         inputs,
@@ -349,20 +350,20 @@ vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
                 assert(f_coeffs[j].size() == partition_size + 1);
 
                 if (labels.has_value()) {
+                    current_labels.resize(partition_size);
+                    size_t nonempty_slots = 0;
                     for (size_t k = 0; k < partition_size; k++) {
                         size_t slot_index = (slot_count * i + j) * capacity + partition * partition_size + k;
-                        current_labels[k] = (buckets[slot_index] != BUCKET_EMPTY)
-                                            ? labels.value()[buckets[slot_index].first]
-                                            : 0;
+                        if (buckets[slot_index] != BUCKET_EMPTY) {
+                            current_bucket[nonempty_slots] = current_bucket[k];
+                            current_labels[nonempty_slots] = labels.value()[buckets[slot_index].first];
+                            nonempty_slots++;
+                        }
                     }
 
-                    // TODO: don't include empty buckets in current_bucket and
-                    // current_labels for this computation so that we can assume
-                    // that all points are distinct in current_bucket
-                    // (otoh, that function is n² and the deduplication is only
-                    // n log n?)
+                    current_bucket.resize(nonempty_slots);
+                    current_labels.resize(nonempty_slots);
                     polynomial_from_points(current_bucket, current_labels, g_coeffs[j], plain_modulus);
-                    assert(g_coeffs[j].size() == partition_size);
                 }
             }
 
@@ -385,7 +386,9 @@ vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
                 for (size_t j = 0; j < partition_size; j++) {
                     g_coeffs_enc[j].resize(buckets_here);
                     for (size_t k = 0; k < buckets_here; k++) {
-                        g_coeffs_enc[j][k] = g_coeffs[slot_count * i + k][j];
+                        g_coeffs_enc[j][k] = (j < g_coeffs[slot_count * i + k].size())
+                                             ? g_coeffs[slot_count * i + k][j]
+                                             : 0;
                     }
 
                     encoder.encode(g_coeffs_enc[j]);

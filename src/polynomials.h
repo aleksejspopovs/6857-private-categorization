@@ -28,12 +28,10 @@ void polynomial_from_roots(vector<uint64_t> &roots, vector<uint64_t> &coeffs, ui
 polynomial_from_points(xs, ys) computes the coefficients of a
 (xs.size() - 1)-degree polynomial f with f(xs[i]) = ys[i] for each i.
 
-if two points with the same x but different y exist, the behavior is undefined.
-if two points that are exactly the same exist, the output will still be correct.
+if two points with the same x exist, the behavior is undefined, even if their y
+are the same.
 
 time complexity: O(n²), where n is the size of xs
-
-NB: will overwrite xs and ys, but not resize them.
 */
 void polynomial_from_points(vector<uint64_t> &xs,
                             vector<uint64_t> &ys,
