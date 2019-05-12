@@ -353,6 +353,11 @@ vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
                                             : 0;
                     }
 
+                    // TODO: don't include empty buckets in current_bucket and
+                    // current_labels for this computation so that we can assume
+                    // that all points are distinct in current_bucket
+                    // (otoh, that function is n² and the deduplication is only
+                    // n log n?)
                     polynomial_from_points(current_bucket, current_labels, g_coeffs[j], plain_modulus);
                     assert(g_coeffs[j].size() == partition_size);
                 }
