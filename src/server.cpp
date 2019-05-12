@@ -11,6 +11,7 @@ using namespace boost::asio;
 int main()
 {
     vector<uint64_t> inputs = {0x01, 0x02, 0x03, 0x04, 0x07, 0x22, 0xca, 0xfe};
+    vector<uint64_t> labels = {0x01, 0x01, 0x02, 0x03, 0x01, 0x02, 0x00, 0x03};
     size_t input_bits = 32;
     unsigned short port = 9999;
 
@@ -59,8 +60,10 @@ int main()
     cout << "computing matches" << endl;
 
     PSISender sender(params);
+    optional<vector<uint64_t>> labels_opt = labels;
     auto sender_matches = sender.compute_matches(
         inputs,
+        labels_opt,
         receiver_pk,
         receiver_rk,
         receiver_inputs

@@ -10,6 +10,8 @@
 using namespace std;
 using namespace seal;
 
+#include "polynomials.h"
+
 int main()
 {
     auto random_factory = UniformRandomGeneratorFactory::default_factory();
@@ -20,8 +22,10 @@ int main()
     size_t input_bits = 8;
 
     vector<uint64_t> sender_inputs(sender_N);
+    vector<uint64_t> sender_labels(sender_N);
     for (size_t i = 0; i < sender_N; i++) {
         sender_inputs[i] = random_bits(random, input_bits);
+        sender_labels[i] = random_bits(random, 2);
     }
 
     vector<uint64_t> receiver_inputs(receiver_N);
@@ -79,29 +83,31 @@ int main()
     // step 3: the sender evaluates polynomials
     // (after having received the receiver's public key and encrypted inputs)
     PSISender server(params);
+    optional<vector<uint64_t>> labels = sender_labels;
     auto sender_matches = server.compute_matches(
         sender_inputs,
+        labels,
         user.public_key(),
         user.relin_keys(),
         receiver_encrypted_inputs
     );
 
     cout << "Sender's set: ";
-    for (uint64_t x : sender_inputs) {
-        cout << x << " ";
+    for (size_t i = 0; i < sender_inputs.size(); i++) {
+        cout << sender_inputs[i] << "-" << sender_labels[i] << " ";
     }
     cout << endl;
     cout << endl;
 
     // step 4: the receiver decrypts the matches
     // (after having received the encrypted matches)
-    auto receiver_matches = user.decrypt_matches(sender_matches);
+    auto receiver_matches = user.decrypt_labeled_matches(sender_matches);
 
     cout << receiver_matches.size() << " matches found: ";
-    for (size_t i : receiver_matches) {
-        assert(i < receiver_buckets.size());
-        assert(receiver_buckets[i] != BUCKET_EMPTY);
-        cout << receiver_inputs[receiver_buckets[i].first] << " ";
+    for (auto i : receiver_matches) {
+        assert(i.first < receiver_buckets.size());
+        assert(receiver_buckets[i.first] != BUCKET_EMPTY);
+        cout << receiver_inputs[receiver_buckets[i.first].first] << "-" << i.second << " ";
     }
     cout << endl;
 

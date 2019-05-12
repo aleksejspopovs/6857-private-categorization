@@ -32,6 +32,8 @@ if two points with the same x but different y exist, the behavior is undefined.
 if two points that are exactly the same exist, the output will still be correct.
 
 time complexity: O(n²), where n is the size of xs
+
+NB: will overwrite xs and ys, but not resize them.
 */
 void polynomial_from_points(vector<uint64_t> &xs,
                             vector<uint64_t> &ys,

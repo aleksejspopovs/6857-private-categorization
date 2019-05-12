@@ -49,13 +49,13 @@ int main()
     net.read_ciphertexts(encrypted_matches);
 
     cout << "decrypting matches" << endl;
-    auto matches = receiver.decrypt_matches(encrypted_matches);
+    auto matches = receiver.decrypt_labeled_matches(encrypted_matches);
 
     cout << matches.size() << " matches found: ";
-    for (size_t i : matches) {
-        assert(i < buckets.size());
-        assert(buckets[i] != BUCKET_EMPTY);
-        cout << inputs[buckets[i].first] << " ";
+    for (auto i : matches) {
+        assert(i.first < buckets.size());
+        assert(buckets[i.first] != BUCKET_EMPTY);
+        cout << inputs[buckets[i.first].first] << "-" << i.second << " ";
     }
     cout << endl;
 }

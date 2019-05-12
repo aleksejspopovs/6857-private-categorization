@@ -18,6 +18,23 @@
 SecretKey *receiver_key_leaked;
 #endif
 
+void multiply_by_random_mask(Ciphertext &ciphertext,
+                             shared_ptr<UniformRandomGenerator> random,
+                             BatchEncoder &encoder,
+                             Evaluator &evaluator,
+                             RelinKeys &relin_keys,
+                             uint64_t plain_modulus)
+{
+    size_t slot_count = encoder.slot_count();
+    Plaintext mask(slot_count, slot_count);
+    for (size_t j = 0; j < slot_count; j++) {
+        mask[j] = random_nonzero_integer(random, plain_modulus);
+    }
+    encoder.encode(mask);
+    evaluator.multiply_plain_inplace(ciphertext, mask);
+    evaluator.relinearize_inplace(ciphertext, relin_keys);
+}
+
 
 PSIParams::PSIParams(size_t receiver_size, size_t sender_size, size_t input_bits)
     : receiver_size(receiver_size),
@@ -176,7 +193,7 @@ vector<size_t> PSIReceiver::decrypt_matches(vector<Ciphertext> &encrypted_matche
     Plaintext decrypted;
     for (size_t i = 0; i < encrypted_matches.size(); i++) {
         // because of partitioning, every `partition_count` elements of the
-        // sender's correspond to the same block sent by the receiver.
+        // sender's response correspond to the same block sent by the receiver.
         size_t block = i / partition_count;
 
         decryptor.decrypt(encrypted_matches[i], decrypted);
@@ -185,6 +202,44 @@ vector<size_t> PSIReceiver::decrypt_matches(vector<Ciphertext> &encrypted_matche
         for (size_t j = 0; (j < slot_count) && (slot_count * block + j < bucket_count); j++) {
             if (decrypted[j] == 0) {
                 result.push_back(slot_count * block + j);
+            }
+        }
+    }
+
+    return result;
+}
+
+vector<pair<size_t, uint64_t>> PSIReceiver::decrypt_labeled_matches(vector<Ciphertext> &encrypted_matches)
+{
+    assert(encrypted_matches.size() % 2 == 0);
+
+    Decryptor decryptor(params.context, secret_key);
+    BatchEncoder encoder(params.context);
+    size_t slot_count = encoder.slot_count();
+
+    size_t bucket_count = (1 << params.bucket_count_log());
+
+    size_t partition_size = params.sender_partition_size();
+    size_t partition_count = params.sender_bucket_capacity() / params.sender_partition_size();
+
+    vector<pair<size_t, uint64_t>> result;
+
+    Plaintext decrypted_matches, decrypted_labels;
+    for (size_t i = 0; i < encrypted_matches.size() / 2; i++) {
+        // because of partitioning, every `partition_count` elements of the
+        // sender's response correspond to the same block sent by the receiver.
+        size_t block = i / partition_count;
+
+        decryptor.decrypt(encrypted_matches[2*i], decrypted_matches);
+        encoder.decode(decrypted_matches);
+        decryptor.decrypt(encrypted_matches[2*i+1], decrypted_labels);
+        encoder.decode(decrypted_labels);
+
+        for (size_t j = 0; (j < slot_count) && (slot_count * block + j < bucket_count); j++) {
+            if (decrypted_matches[j] == 0) {
+                result.push_back(pair<size_t, uint64_t>(
+                    slot_count * block + j, decrypted_labels[j]
+                ));
             }
         }
     }
@@ -207,11 +262,13 @@ PSISender::PSISender(PSIParams &params)
 {}
 
 vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
+                                              optional<vector<uint64_t>> &labels,
                                               PublicKey& receiver_public_key,
                                               RelinKeys relin_keys,
                                               vector<vector<Ciphertext>> &receiver_inputs)
 {
     assert(inputs.size() == params.sender_size);
+    assert(!labels.has_value() || (labels.value().size() == inputs.size()));
 
     auto random_factory = UniformRandomGeneratorFactory::default_factory();
     auto random = random_factory->create();
@@ -241,7 +298,9 @@ vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
     size_t block_count = (bucket_count + (slot_count - 1)) / slot_count;
     assert(receiver_inputs.size() == block_count);
 
-    vector<Ciphertext> result(receiver_inputs.size() * partition_count);
+    // if we're doing labeled PSI, we need two ciphertexts per
+    // (partition, receiver input) pair: one for f(x) and one for r*f(x) + g(x)
+    vector<Ciphertext> result((labels.has_value() ? 2 : 1) * receiver_inputs.size() * partition_count);
 
     // these are auxiliary vectors that we use for each batch of receiver
     // inputs, so we declare them here to avoid allocating them anew in every
@@ -250,6 +309,11 @@ vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
     vector<vector<uint64_t>> f_coeffs(slot_count);
     vector<Plaintext> f_coeffs_enc(partition_size + 1);
     vector<Ciphertext> powers(partition_size + 1);
+    // we'll only need these if we're doing labeled PSI, so we set the sizes to
+    // 0 if we aren't to avoid unnecessarily wasting memory
+    vector<uint64_t> current_labels(labels.has_value() ? partition_size : 0);
+    vector<vector<uint64_t>> g_coeffs(labels.has_value() ? slot_count : 0);
+    vector<Plaintext> g_coeffs_enc(labels.has_value() ? partition_size : 0);
 
     for (size_t i = 0; i < block_count; i++) {
         // compute all the powers of the receiver's input.
@@ -267,6 +331,8 @@ vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
         for (size_t partition = 0; partition < partition_count; partition++) {
             // for each bucket, compute the coefficients of the polynomial
             // f(x) = \prod_{y in bucket} (x - y)
+            // optionally, also compute coeffs of g(x), which has the property]
+            // g(y) = label(y) for each y in bucket.
             for (size_t j = 0; j < buckets_here; j++) {
                 for (size_t k = 0; k < partition_size; k++) {
                     current_bucket[k] = params.encode_bucket_element(
@@ -277,6 +343,19 @@ vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
                 }
 
                 polynomial_from_roots(current_bucket, f_coeffs[j], plain_modulus);
+                assert(f_coeffs[j].size() == partition_size + 1);
+
+                if (labels.has_value()) {
+                    for (size_t k = 0; k < partition_size; k++) {
+                        size_t slot_index = (slot_count * i + j) * capacity + partition * partition_size + k;
+                        current_labels[k] = (buckets[slot_index] != BUCKET_EMPTY)
+                                            ? labels.value()[buckets[slot_index].first]
+                                            : 0;
+                    }
+
+                    polynomial_from_points(current_bucket, current_labels, g_coeffs[j], plain_modulus);
+                    assert(g_coeffs[j].size() == partition_size);
+                }
             }
 
             // now that we have the polynomials, encode the coefficients of all
@@ -294,15 +373,31 @@ vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
                 encoder.encode(f_coeffs_enc[j]);
             }
 
+            if (labels.has_value()) {
+                for (size_t j = 0; j < partition_size; j++) {
+                    g_coeffs_enc[j].resize(buckets_here);
+                    for (size_t k = 0; k < buckets_here; k++) {
+                        g_coeffs_enc[j][k] = g_coeffs[slot_count * i + k][j];
+                    }
+
+                    encoder.encode(g_coeffs_enc[j]);
+                }
+            }
+
             // we are done with sender's precomputation. now we can actually
             // evaluate the polynomial on the receiver's input.
             // first, encrypt the constant term directly into the result.
-            encryptor.encrypt(f_coeffs_enc[0], result[i * partition_count + partition]);
+            Ciphertext f_evaluated;
+            Ciphertext g_evaluated;
+            encryptor.encrypt(f_coeffs_enc[0], f_evaluated);
+            if (labels.has_value()) {
+                encryptor.encrypt(g_coeffs_enc[0], g_evaluated);
+            }
 
     #ifdef DEBUG_WITH_KEY_LEAK
             Decryptor decryptor(params.context, *receiver_key_leaked);
             cerr << "computing matches for receiver batch #" << i << endl;
-            cerr << "initially the noise budget is " << decryptor.invariant_noise_budget(result[i * partition_count + partition]) << endl;
+            cerr << "initially the noise budget is " << decryptor.invariant_noise_budget(f_evaluated) << endl;
     #endif
 
             // now compute the rest of the terms and add them into the result.
@@ -313,24 +408,40 @@ vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
                 if (!f_coeffs_enc[j].is_zero()) {
                     evaluator.multiply_plain(powers[j], f_coeffs_enc[j], term);
                     evaluator.relinearize_inplace(term, relin_keys);
-                    evaluator.add_inplace(result[i * partition_count + partition], term);
+                    evaluator.add_inplace(f_evaluated, term);
+                }
+
+                // the first check here accomplishes two things:
+                // it both checks that labeled PSI is enabled
+                // (because otherwise g_coeffs_enc.size() == 0)
+                // and handles the fact that the deg of g is a little smaller
+                // than the deg of f.
+                if ((j < g_coeffs_enc.size()) && !g_coeffs_enc[j].is_zero()) {
+                    evaluator.multiply_plain(powers[j], g_coeffs_enc[j], term);
+                    evaluator.relinearize_inplace(term, relin_keys);
+                    evaluator.add_inplace(g_evaluated, term);
                 }
 
     #ifdef DEBUG_WITH_KEY_LEAK
-            cerr << "after term " << j << " it is " << decryptor.invariant_noise_budget(result[i * partition_count + partition]) << endl;
+            cerr << "after term " << j << " it is " << decryptor.invariant_noise_budget(f_evaluated) << endl;
     #endif
             }
 
-            // now multiply the result of each computation by a random mask
-            Plaintext random_mask(slot_count, slot_count);
-            for (size_t j = 0; j < slot_count; j++) {
-                random_mask[j] = random_nonzero_integer(random, plain_modulus);
+            // for unlabeled PSI, return r * f(x)
+            // for labeled PSI, return (r * f(x), r' * f(x) + g(x))
+            // where r and r' are random.
+            multiply_by_random_mask(f_evaluated, random, encoder, evaluator, relin_keys, plain_modulus);
+            if (labels.has_value()) {
+                result[2 * (i * partition_count + partition)] = f_evaluated;
+
+                multiply_by_random_mask(f_evaluated, random, encoder, evaluator, relin_keys, plain_modulus);
+                evaluator.add(
+                    f_evaluated, g_evaluated,
+                    result[2 * (i * partition_count + partition) + 1]
+                );
+            } else {
+                result[i * partition_count + partition] = f_evaluated;
             }
-            encoder.encode(random_mask);
-            evaluator.multiply_plain_inplace(result[i * partition_count + partition], random_mask);
-            // since we're done computing on this, this relinearization is really
-            // only helpful to decrease communication costs
-            evaluator.relinearize_inplace(result[i * partition_count + partition], relin_keys);
         }
     }
 

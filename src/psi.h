@@ -1,4 +1,7 @@
 #pragma once
+#include <vector>
+#include <optional>
+
 #include "seal/seal.h"
 
 #include "hashing.h"
@@ -36,6 +39,7 @@ public:
     PSIReceiver(PSIParams &params);
     vector<vector<Ciphertext>> encrypt_inputs(vector<uint64_t> &inputs, vector<bucket_slot> &buckets);
     vector<size_t> decrypt_matches(vector<Ciphertext> &encrypted_matches);
+    vector<pair<size_t, uint64_t>> decrypt_labeled_matches(vector<Ciphertext> &encrypted_matches);
     PublicKey& public_key();
     RelinKeys relin_keys();
 
@@ -51,6 +55,7 @@ class PSISender
 public:
     PSISender(PSIParams &params);
     vector<Ciphertext> compute_matches(vector<uint64_t> &inputs,
+                                       optional<vector<uint64_t>> &labels,
                                        PublicKey& receiver_public_key,
                                        RelinKeys relin_keys,
                                        vector<vector<Ciphertext>> &receiver_inputs);
