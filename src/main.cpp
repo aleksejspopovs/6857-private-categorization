@@ -1,3 +1,4 @@
+#include <cassert>
 #include <iostream>
 
 #include "seal/seal.h"
@@ -54,17 +55,22 @@ int main()
 
     // step 2: receiver generates keys and inputs with the keys
     PSIReceiver user(params);
-    cout << "User's set before hashing: ";
+    cout << "User's set: ";
     for (uint64_t x : receiver_inputs) {
         cout << x << " ";
     }
     cout << endl;
 
-    auto receiver_encrypted_inputs = user.encrypt_inputs(receiver_inputs);
+    vector<bucket_slot> receiver_buckets;
+    auto receiver_encrypted_inputs = user.encrypt_inputs(receiver_inputs, receiver_buckets);
 
-    cout << "User's set after hashing: ";
-    for (uint64_t x : receiver_inputs) {
-        cout << x << " ";
+    cout << "User's buckets: ";
+    for (auto x : receiver_buckets) {
+        if (x == BUCKET_EMPTY) {
+            cout << "--:-- ";
+        } else {
+            cout << x.first << ":" << receiver_inputs[x.first] << " ";
+        }
     }
     cout << endl;
     cout << endl;
@@ -93,11 +99,9 @@ int main()
 
     cout << receiver_matches.size() << " matches found: ";
     for (size_t i : receiver_matches) {
-        if (i < receiver_inputs.size()) {
-            cout << i << ":" << receiver_inputs[i] << " ";
-        } else {
-            cout << i << ":INVALID ";
-        }
+        assert(i < receiver_buckets.size());
+        assert(receiver_buckets[i] != BUCKET_EMPTY);
+        cout << receiver_inputs[receiver_buckets[i].first] << " ";
     }
     cout << endl;
 

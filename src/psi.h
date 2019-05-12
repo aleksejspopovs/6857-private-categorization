@@ -21,7 +21,7 @@ public:
     size_t sender_partition_size();
     size_t window_size();
 
-    uint64_t encode_bucket_element(bucket_slot &element, bool is_receiver);
+    uint64_t encode_bucket_element(vector<uint64_t> &inputs, bucket_slot &element, bool is_receiver);
 
     size_t receiver_size;
     size_t sender_size;
@@ -34,7 +34,7 @@ class PSIReceiver
 {
 public:
     PSIReceiver(PSIParams &params);
-    vector<vector<Ciphertext>> encrypt_inputs(vector<uint64_t> &inputs);
+    vector<vector<Ciphertext>> encrypt_inputs(vector<uint64_t> &inputs, vector<bucket_slot> &buckets);
     vector<size_t> decrypt_matches(vector<Ciphertext> &encrypted_matches);
     PublicKey& public_key();
     RelinKeys relin_keys();

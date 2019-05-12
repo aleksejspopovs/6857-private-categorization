@@ -84,7 +84,7 @@ size_t PSIParams::window_size() {
     return 1;
 }
 
-uint64_t PSIParams::encode_bucket_element(bucket_slot &element, bool is_receiver) {
+uint64_t PSIParams::encode_bucket_element(vector<uint64_t> &inputs, bucket_slot &element, bool is_receiver) {
     if (element != BUCKET_EMPTY) {
         // we need to encode:
         // - the input itself, except for the last bucket_count_log() bits
@@ -92,7 +92,7 @@ uint64_t PSIParams::encode_bucket_element(bucket_slot &element, bool is_receiver
         // - the index of the hash function used to hash it into its bucket.
         //   this should be in [0, 1, 2]; index 3 is used for dummy elements.
         assert(element.second < 3);
-        return (((element.first >> bucket_count_log()) << 2)
+        return (((inputs[element.first] >> bucket_count_log()) << 2)
                 | (element.second));
     } else {
         // for the dummy element, we use a non-existent hash funcion index (3)
@@ -114,7 +114,7 @@ PSIReceiver::PSIReceiver(PSIParams &params)
 #endif
 }
 
-vector<vector<Ciphertext>> PSIReceiver::encrypt_inputs(vector<uint64_t> &inputs)
+vector<vector<Ciphertext>> PSIReceiver::encrypt_inputs(vector<uint64_t> &inputs, vector<bucket_slot> &buckets)
 {
     assert(inputs.size() == params.receiver_size);
 
@@ -131,7 +131,6 @@ vector<vector<Ciphertext>> PSIReceiver::encrypt_inputs(vector<uint64_t> &inputs)
 
     size_t bucket_count_log = params.bucket_count_log();
     size_t bucket_count = 1 << bucket_count_log;
-    vector<bucket_slot> buckets(bucket_count, BUCKET_EMPTY);
     bool res = cuckoo_hash(random, inputs, bucket_count_log, buckets, params.seeds);
     assert(res); // TODO: handle gracefully
 
@@ -152,22 +151,10 @@ vector<vector<Ciphertext>> PSIReceiver::encrypt_inputs(vector<uint64_t> &inputs)
 
         buckets_grouped.resize(buckets_here);
         for (size_t i = 0; i < buckets_here; i++) {
-            buckets_grouped[i] = params.encode_bucket_element(buckets[slot_count * block + i], true);
+            buckets_grouped[i] = params.encode_bucket_element(inputs, buckets[slot_count * block + i], true);
         }
 
         windowing.prepare(buckets_grouped, result[block], plain_modulus, encoder, encryptor);
-    }
-
-    // after completing the protocol, the receiver will learn which locations
-    // *in the hash table* matched. in order for that information to be useful,
-    // they need to know where each element of their input vector went in the
-    // hash table. to enable that, let's rearrange the input vector so that now
-    // everything is where it was hashed to.
-    // TODO: this is kind of a hack and needs to be better-documented or maybe
-    // replaced.
-    inputs.resize(bucket_count);
-    for (size_t i = 0; i < bucket_count; i++) {
-        inputs[i] = buckets[i].first;
     }
 
     return result;
@@ -241,7 +228,7 @@ vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
     size_t bucket_count_log = params.bucket_count_log();
     size_t bucket_count = (1 << bucket_count_log);
     size_t capacity = params.sender_bucket_capacity();
-    vector<bucket_slot> buckets(bucket_count * capacity, BUCKET_EMPTY);
+    vector<bucket_slot> buckets;
     bool res = complete_hash(random, inputs, bucket_count_log, capacity, buckets, params.seeds);
     assert(res); // TODO: handle gracefully
 
@@ -283,6 +270,7 @@ vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
             for (size_t j = 0; j < buckets_here; j++) {
                 for (size_t k = 0; k < partition_size; k++) {
                     current_bucket[k] = params.encode_bucket_element(
+                        inputs,
                         buckets[(slot_count * i + j) * capacity + partition * partition_size + k],
                         false
                     );

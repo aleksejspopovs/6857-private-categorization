@@ -22,23 +22,30 @@ bool cuckoo_hash(shared_ptr<UniformRandomGenerator> random,
 	             vector<bucket_slot> &buckets,
 	             vector<uint64_t> &seeds)
 {
-	assert(buckets.size() == (1 << m));
+	buckets.resize(1 << m);
+	for (size_t i = 0; i < buckets.size(); i++) {
+		buckets[i] = BUCKET_EMPTY;
+	}
 
 	vector<AES> aes(seeds.size());
 	for (size_t i = 0; i < seeds.size(); i++) {
 		aes[i].set_key(0, seeds[i]);
 	}
 
-	for (uint64_t s : inputs) {
+	for (size_t i = 0; i < inputs.size(); i++) {
 		bool resolved = false;
 		bucket_slot current_item = make_pair(
-			s,
+			i,
 			random_integer(random, seeds.size())
 		);
 
 		// TODO: keep track of # of operations and abort if exceeding some limit
 		while (!resolved) {
-			size_t loc = loc_aes_hash(aes[current_item.second], m, current_item.first);
+			size_t loc = loc_aes_hash(
+				aes[current_item.second],
+				m,
+				inputs[current_item.first]
+			);
 
 			buckets[loc].swap(current_item);
 
@@ -63,7 +70,10 @@ bool complete_hash(shared_ptr<UniformRandomGenerator> random,
                    vector<bucket_slot> &buckets,
                    vector<uint64_t> &seeds)
 {
-	assert(buckets.size() == capacity << m);
+	buckets.resize(capacity << m);
+	for (size_t i = 0; i < buckets.size(); i++) {
+		buckets[i] = BUCKET_EMPTY;
+	}
 
 	vector<AES> aes(seeds.size());
 	for (size_t i = 0; i < seeds.size(); i++) {
@@ -74,9 +84,9 @@ bool complete_hash(shared_ptr<UniformRandomGenerator> random,
 
 	// insert all elements into the table in a deterministic order (filling each
 	// bucket sequentially)
-	for (uint64_t s : inputs) {
-		for (size_t i = 0; i < seeds.size(); i++) {
-			size_t loc = loc_aes_hash(aes[i], m, s);
+	for (size_t i = 0; i < inputs.size(); i++) {
+		for (size_t j = 0; j < seeds.size(); j++) {
+			size_t loc = loc_aes_hash(aes[j], m, inputs[i]);
 
 			if (capacity_used[loc] == capacity) {
 				// all slots in the bucket are used, so we cannot add this
@@ -84,7 +94,7 @@ bool complete_hash(shared_ptr<UniformRandomGenerator> random,
 				return false;
 			}
 
-			buckets[capacity * loc + capacity_used[loc]] = make_pair(s, i);
+			buckets[capacity * loc + capacity_used[loc]] = make_pair(i, j);
 			capacity_used[loc]++;
 		}
 	}

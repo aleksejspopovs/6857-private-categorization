@@ -1,3 +1,4 @@
+#include <cassert>
 #include <iostream>
 
 #include "boost/asio.hpp"
@@ -37,7 +38,8 @@ int main()
     net.write_relin_keys(receiver.relin_keys());
 
     cout << "encrypting inputs" << endl;
-    auto encrypted_inputs = receiver.encrypt_inputs(inputs);
+    vector<bucket_slot> buckets;
+    auto encrypted_inputs = receiver.encrypt_inputs(inputs, buckets);
 
     cout << "sending inputs" << endl;
     net.write_ciphertexts_2d(encrypted_inputs);
@@ -51,11 +53,9 @@ int main()
 
     cout << matches.size() << " matches found: ";
     for (size_t i : matches) {
-        if (i < inputs.size()) {
-            cout << i << ":" << inputs[i] << " ";
-        } else {
-            cout << i << ":INVALID ";
-        }
+        assert(i < buckets.size());
+        assert(buckets[i] != BUCKET_EMPTY);
+        cout << inputs[buckets[i].first] << " ";
     }
     cout << endl;
 }
