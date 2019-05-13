@@ -6,7 +6,6 @@ const uint64_t NET_MAGIC_HELLO = 0x5052495643415453ull; // 'PRIVCATS'
 const uint32_t NET_MAGIC_VECTOR_UINT64 = 0x76756938ul; // 'vui8'
 const uint32_t NET_MAGIC_CIPHERTEXT = 0x63697074ul; // 'cipt'
 const uint32_t NET_MAGIC_VECTOR_CIPHERTEXT = 0x76636970ul; // 'vcip'
-const uint32_t NET_MAGIC_VECTOR_VECTOR_CIPHERTEXT = 0x76766369ul; // 'vvci'
 const uint32_t NET_MAGIC_PUBLIC_KEY = 0x706b6579ul; // 'pkey'
 const uint32_t NET_MAGIC_RELIN_KEYS = 0x72656c6eul; // 'reln'
 
@@ -107,23 +106,6 @@ void Networking::write_ciphertexts(vector<Ciphertext> &ciphertexts) {
     write_uint32(ciphertexts.size());
     for (size_t i = 0; i < ciphertexts.size(); i++) {
         write_ciphertext(ciphertexts[i]);
-    }
-}
-
-void Networking::read_ciphertexts_2d(vector<vector<Ciphertext>> &ciphertexts) {
-    assert(read_uint32() == NET_MAGIC_VECTOR_VECTOR_CIPHERTEXT);
-    uint32_t length = read_uint32();
-    ciphertexts.resize(length);
-    for (size_t i = 0; i < length; i++) {
-        read_ciphertexts(ciphertexts[i]);
-    }
-}
-
-void Networking::write_ciphertexts_2d(vector<vector<Ciphertext>> &ciphertexts) {
-    write_uint32(NET_MAGIC_VECTOR_VECTOR_CIPHERTEXT);
-    write_uint32(ciphertexts.size());
-    for (size_t i = 0; i < ciphertexts.size(); i++) {
-        write_ciphertexts(ciphertexts[i]);
     }
 }
 

@@ -36,9 +36,6 @@ public:
     void read_ciphertexts(vector<Ciphertext> &ciphertexts);
     void write_ciphertexts(vector<Ciphertext> &ciphertexts);
 
-    void read_ciphertexts_2d(vector<vector<Ciphertext>> &ciphertexts);
-    void write_ciphertexts_2d(vector<vector<Ciphertext>> &ciphertexts);
-
     void read_public_key(PublicKey &public_key);
     void write_public_key(PublicKey &public_key);
 

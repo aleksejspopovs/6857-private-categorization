@@ -42,7 +42,7 @@ int main()
     auto encrypted_inputs = receiver.encrypt_inputs(inputs, buckets);
 
     cout << "sending inputs" << endl;
-    net.write_ciphertexts_2d(encrypted_inputs);
+    net.write_ciphertexts(encrypted_inputs);
 
     cout << "waiting for encrypted matches" << endl;
     vector<Ciphertext> encrypted_matches;

@@ -54,8 +54,8 @@ int main()
     RelinKeys receiver_rk;
     net.read_relin_keys(receiver_rk);
     cout << "waiting for inputs" << endl;
-    vector<vector<Ciphertext>> receiver_inputs;
-    net.read_ciphertexts_2d(receiver_inputs);
+    vector<Ciphertext> receiver_inputs;
+    net.read_ciphertexts(receiver_inputs);
 
     cout << "computing matches" << endl;
 
