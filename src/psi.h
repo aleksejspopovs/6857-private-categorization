@@ -22,7 +22,7 @@ public:
     size_t hash_functions();
     size_t bucket_count_log();
     size_t sender_bucket_capacity();
-    size_t sender_partition_size();
+    size_t sender_partition_count();
     size_t window_size();
 
     uint64_t encode_bucket_element(vector<uint64_t> &inputs, bucket_slot &element, bool is_receiver);
@@ -32,6 +32,11 @@ public:
     size_t input_bits;
     shared_ptr<SEALContext> context;
     vector<uint64_t> seeds;
+
+private:
+    size_t poly_modulus_degree_;
+    size_t sender_partition_count_;
+    size_t window_size_;
 };
 
 class PSIReceiver

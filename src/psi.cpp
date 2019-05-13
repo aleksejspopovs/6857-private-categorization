@@ -39,7 +39,10 @@ void multiply_by_random_mask(Ciphertext &ciphertext,
 PSIParams::PSIParams(size_t receiver_size, size_t sender_size, size_t input_bits)
     : receiver_size(receiver_size),
       sender_size(sender_size),
-      input_bits(input_bits)
+      input_bits(input_bits),
+      poly_modulus_degree_(16384),
+      sender_partition_count_(16),
+      window_size_(3)
 {
     EncryptionParameters parms(scheme_type::BFV);
     parms.set_poly_modulus_degree(poly_modulus_degree());
@@ -47,6 +50,8 @@ PSIParams::PSIParams(size_t receiver_size, size_t sender_size, size_t input_bits
     parms.set_plain_modulus(plain_modulus());
     context = SEALContext::Create(parms);
 
+    // it must be possible to cuckoo hash the receiver's set into the buckets
+    assert(receiver_size <= (1ull << bucket_count_log()));
     // all of the receiver's buckets must fit into one batched ciphertext
     assert((1ull << bucket_count_log()) <= poly_modulus_degree());
 }
@@ -67,15 +72,27 @@ void PSIParams::set_seeds(vector<uint64_t> &seeds_ext) {
 }
 
 size_t PSIParams::poly_modulus_degree() {
-    return 16384;
+    return poly_modulus_degree_;
 }
 
 uint64_t PSIParams::plain_modulus() {
     // for batching to work, the plain modulus must be a prime that's equal
     // to 1 mod (2 * poly_modulus_degree).
-    // TODO: choose this optimally (it should be a little over
-    // 2^(input_bits - bucket_count_log() + 2)).
-    return (8192 * 2 * 4) + 1;
+    // it should also be a little over 2^(input_bits - bucket_count_log() + 2)).
+    uint64_t min_log_modulus = 0;
+    if (input_bits + 2 >= bucket_count_log()) {
+        min_log_modulus = input_bits - bucket_count_log() + 2;
+    }
+
+    if (min_log_modulus <= 16) {
+        return (8192 * 2 * 4) + 1; // 2^16 + 1
+    } else if (min_log_modulus <= 23) {
+        return 8519681ull; // 2^23 + 2^17 + 1
+    } else if (min_log_modulus <= 35) {
+        return 34359771137ull; // 2^35 + 2^15 + 1
+    } else {
+        assert(0);
+    }
 }
 
 size_t PSIParams::hash_functions() {
@@ -83,29 +100,54 @@ size_t PSIParams::hash_functions() {
 }
 
 size_t PSIParams::bucket_count_log() {
-    // we want to have a number of buckets that is a power of two and a little
-    // bigger than receiver_size, so let's output ceil(log2(receiver_size)) + 1
-    // (so we'll have between 2x and 4x buckets).
-    size_t result = 0;
-    while ((1ul << result) < receiver_size) {
-        result++;
-    }
-
-    return result + 1;
+    return (poly_modulus_degree() == 8192) ? 13 : 14;
 }
 
 size_t PSIParams::sender_bucket_capacity() {
-    // TODO: fix this
     // see Table 1 in [CLR17]
-    return 20;
+    assert(hash_functions() == 3);
+    if (bucket_count_log() == 13) {
+        if (sender_size <= (1ull << 8)) {
+            return 9;
+        } else if (sender_size <= (1ull << 12)) {
+            return 20;
+        } else if (sender_size <= (1ull << 16)) {
+            return 74;
+        } else if (sender_size <= (1ull << 20)) {
+            return 556;
+        } else if (sender_size <= (1ull << 24)) {
+            return 6798;
+        } else if (sender_size <= (1ull << 28)) {
+            return 100890;
+        }
+    }
+
+    if (bucket_count_log() == 14) {
+        if (sender_size <= (1ull << 8)) {
+            return 8;
+        } else if (sender_size <= (1ull << 12)) {
+            return 16;
+        } else if (sender_size <= (1ull << 16)) {
+            return 51;
+        } else if (sender_size <= (1ull << 20)) {
+            return 318;
+        } else if (sender_size <= (1ull << 24)) {
+            return 3543;
+        } else if (sender_size <= (1ull << 28)) {
+            return 51002;
+        }
+    }
+
+    assert(0);
+    return 0;
 }
 
-size_t PSIParams::sender_partition_size() {
-    return 5;
+size_t PSIParams::sender_partition_count() {
+    return sender_partition_count_;
 }
 
 size_t PSIParams::window_size() {
-    return 1;
+    return window_size_;
 }
 
 uint64_t PSIParams::encode_bucket_element(vector<uint64_t> &inputs, bucket_slot &element, bool is_receiver) {
@@ -159,7 +201,9 @@ vector<Ciphertext> PSIReceiver::encrypt_inputs(vector<uint64_t> &inputs, vector<
     assert(res); // TODO: handle gracefully
 
     vector<uint64_t> buckets_enc(bucket_count);
-    Windowing windowing(params.window_size(), params.sender_partition_size());
+    size_t partition_count = params.sender_partition_count();
+    size_t max_partition_size = (params.sender_bucket_capacity() + (partition_count - 1)) / partition_count;
+    Windowing windowing(params.window_size(), max_partition_size);
 
     for (size_t i = 0; i < bucket_count; i++) {
         buckets_enc[i] = params.encode_bucket_element(inputs, buckets[i], true);
@@ -266,36 +310,46 @@ vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
     bool res = complete_hash(random, inputs, bucket_count_log, capacity, buckets, params.seeds);
     assert(res); // TODO: handle gracefully
 
-    size_t partition_size = params.sender_partition_size();
-    assert(capacity % partition_size == 0);
-    size_t partition_count = capacity / partition_size;
+    // we will split the hash table into partitions: instead of looking at a
+    // hash table with `capacity` rows, split it into `partition_count` tables
+    // with roughly the same number of rows each.
+    // specifically, `big_partition_count` subtables will have
+    // `max_partition_size` rows, and the rest will have one fewer.
+    size_t partition_count = params.sender_partition_count();
+    assert(capacity >= partition_count);
+    size_t max_partition_size = (capacity + (partition_count - 1)) / partition_count;
+    size_t big_partition_count = capacity - (max_partition_size - 1) * partition_count;
 
-    Windowing windowing(params.window_size(), params.sender_partition_size());
+    Windowing windowing(params.window_size(), max_partition_size);
 
     // if we're doing labeled PSI, we need two ciphertexts per partition:
     // one for f(x) and one for r*f(x) + g(x)
     vector<Ciphertext> result((labels.has_value() ? 2 : 1) * partition_count);
 
     // compute all the powers of the receiver's input.
-    vector<Ciphertext> powers(partition_size + 1);
+    vector<Ciphertext> powers(max_partition_size + 1);
     windowing.compute_powers(receiver_inputs, powers, evaluator, relin_keys);
-
-    // now we proceed to split the hash table into partitions: instead of
-    // looking at a hash table with `capacity` rows, imagine we're looking
-    // at `partition_count` hash tables of size `partition_size` each.
 
     // we'll need these vectors for each iteration, so let's declare them here
     // to avoid reallocating them anew each time.
-    vector<uint64_t> current_bucket(partition_size);
+    vector<uint64_t> current_bucket(max_partition_size);
     vector<vector<uint64_t>> f_coeffs(bucket_count);
-    vector<Plaintext> f_coeffs_enc(partition_size + 1);
     // we'll only need these if we're doing labeled PSI, so we set the sizes to
     // 0 if we aren't to avoid unnecessarily wasting memory
-    vector<uint64_t> current_labels(labels.has_value() ? partition_size : 0);
+    vector<uint64_t> current_labels(labels.has_value() ? max_partition_size : 0);
     vector<vector<uint64_t>> g_coeffs(labels.has_value() ? bucket_count : 0);
-    vector<Plaintext> g_coeffs_enc(labels.has_value() ? partition_size : 0);
 
     for (size_t partition = 0; partition < partition_count; partition++) {
+        // figure out which many rows go into this partition
+        size_t partition_size, partition_start;
+        if (partition < big_partition_count) {
+            partition_size = max_partition_size;
+            partition_start = max_partition_size * partition;
+        } else {
+            partition_size = max_partition_size - 1;
+            partition_start = max_partition_size * partition - (partition - big_partition_count);
+        }
+
         // for each bucket, compute the coefficients of the polynomial
         // f(x) = \prod_{y in bucket} (x - y)
         // optionally, also compute coeffs of g(x), which has the property
@@ -305,7 +359,7 @@ vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
             for (size_t k = 0; k < partition_size; k++) {
                 current_bucket[k] = params.encode_bucket_element(
                     inputs,
-                    buckets[j * capacity + partition * partition_size + k],
+                    buckets[j * capacity + partition_start + k],
                     false
                 );
             }
@@ -317,7 +371,7 @@ vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
                 current_labels.resize(partition_size);
                 size_t nonempty_slots = 0;
                 for (size_t k = 0; k < partition_size; k++) {
-                    size_t slot_index = j * capacity + partition * partition_size + k;
+                    size_t slot_index = j * capacity + partition_start + k;
                     if (buckets[slot_index] != BUCKET_EMPTY) {
                         current_bucket[nonempty_slots] = current_bucket[k];
                         current_labels[nonempty_slots] = labels.value()[buckets[slot_index].first];
@@ -331,73 +385,62 @@ vector<Ciphertext> PSISender::compute_matches(vector<uint64_t> &inputs,
             }
         }
 
-        // now that we have the polynomials, encode the coefficients of all
-        // polynomials into vectors, grouped by degree (so if a[i, j] is the
-        // j-th coefficient of polynomial i, we want vectors
-        // [a[0, j], a[1, j], ...] for each j).
-        // this is basically just the transpose of f_coeffs, but also run
-        // through the batch encoder.
-        for (size_t j = 0; j < partition_size + 1; j++) {
-            f_coeffs_enc[j].resize(bucket_count);
-            for (size_t k = 0; k < bucket_count; k++) {
-                f_coeffs_enc[j][k] = f_coeffs[k][j];
-            }
-
-            encoder.encode(f_coeffs_enc[j]);
-        }
-
-        if (labels.has_value()) {
-            for (size_t j = 0; j < partition_size; j++) {
-                g_coeffs_enc[j].resize(bucket_count);
-                for (size_t k = 0; k < bucket_count; k++) {
-                    g_coeffs_enc[j][k] = (j < g_coeffs[k].size())
-                                         ? g_coeffs[k][j]
-                                         : 0;
-                }
-
-                encoder.encode(g_coeffs_enc[j]);
-            }
-        }
-
         // we are done with sender's precomputation. now we can actually
         // evaluate the polynomial on the receiver's input.
-        // first, encrypt the constant term directly into the result.
         Ciphertext f_evaluated;
         Ciphertext g_evaluated;
-        encryptor.encrypt(f_coeffs_enc[0], f_evaluated);
-        if (labels.has_value()) {
-            encryptor.encrypt(g_coeffs_enc[0], g_evaluated);
-        }
 
 #ifdef DEBUG_WITH_KEY_LEAK
         Decryptor decryptor(params.context, *receiver_key_leaked);
-        cerr << "initially the noise budget is " << decryptor.invariant_noise_budget(f_evaluated) << endl;
+        cerr << "processing partition " << partition << endl;
 #endif
 
-        // now compute the rest of the terms and add them into the result.
-        for (size_t j = 1; j < partition_size + 1; j++) {
-            // term = receiver_inputs^j * f_coeffs_enc[j]
-            Ciphertext term;
-            // multiply_plain does not allow the second parameter to be zero.
-            if (!f_coeffs_enc[j].is_zero()) {
-                evaluator.multiply_plain(powers[j], f_coeffs_enc[j], term);
-                evaluator.relinearize_inplace(term, relin_keys);
-                evaluator.add_inplace(f_evaluated, term);
+        for (size_t j = 0; j < partition_size + 1; j++) {
+            // encode the jth coefficients of all polynomials into a vector
+            Plaintext f_coeffs_enc(bucket_count, bucket_count);
+            for (size_t k = 0; k < bucket_count; k++) {
+                f_coeffs_enc[k] = f_coeffs[k][j];
+            }
+            encoder.encode(f_coeffs_enc);
+
+            Plaintext g_coeffs_enc;
+            if (labels.has_value()) {
+                g_coeffs_enc.resize(bucket_count);
+                for (size_t k = 0; k < bucket_count; k++) {
+                    g_coeffs_enc[k] = (j < g_coeffs[k].size())
+                                         ? g_coeffs[k][j]
+                                         : 0;
+                }
+                encoder.encode(g_coeffs_enc);
             }
 
-            // the first check here accomplishes two things:
-            // it both checks that labeled PSI is enabled
-            // (because otherwise g_coeffs_enc.size() == 0)
-            // and handles the fact that the deg of g is a little smaller
-            // than the deg of f.
-            if ((j < g_coeffs_enc.size()) && !g_coeffs_enc[j].is_zero()) {
-                evaluator.multiply_plain(powers[j], g_coeffs_enc[j], term);
-                evaluator.relinearize_inplace(term, relin_keys);
-                evaluator.add_inplace(g_evaluated, term);
+            if (j == 0) {
+                // the constant term just goes straight into the result, and
+                // then the other terms will be added into it later.
+                encryptor.encrypt(f_coeffs_enc, f_evaluated);
+                if (labels.has_value()) {
+                    encryptor.encrypt(g_coeffs_enc, g_evaluated);
+                }
+            } else {
+                // term = receiver_inputs^j * f_coeffs_enc
+                // multiply_plain does not allow the second parameter to be zero.
+                if (!f_coeffs_enc.is_zero()) {
+                    Ciphertext term;
+                    evaluator.multiply_plain(powers[j], f_coeffs_enc, term);
+                    evaluator.relinearize_inplace(term, relin_keys);
+                    evaluator.add_inplace(f_evaluated, term);
+                }
+
+                if (!g_coeffs_enc.is_zero()) {
+                    Ciphertext term;
+                    evaluator.multiply_plain(powers[j], g_coeffs_enc, term);
+                    evaluator.relinearize_inplace(term, relin_keys);
+                    evaluator.add_inplace(g_evaluated, term);
+                }
             }
 
 #ifdef DEBUG_WITH_KEY_LEAK
-        cerr << "after term " << j << " it is " << decryptor.invariant_noise_budget(f_evaluated) << endl;
+        cerr << "after term " << j << " n.b. is " << decryptor.invariant_noise_budget(f_evaluated) << endl;
 #endif
         }
 
