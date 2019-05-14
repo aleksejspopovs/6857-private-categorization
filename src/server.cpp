@@ -13,6 +13,7 @@ int main()
     vector<uint64_t> inputs = {0x01, 0x02, 0x03, 0x04, 0x07, 0x22, 0xca, 0xfe};
     vector<uint64_t> labels = {0x01, 0x01, 0x02, 0x03, 0x01, 0x02, 0x00, 0x03};
     size_t input_bits = 32;
+    size_t poly_modulus_degree = 8192;
     unsigned short port = 9999;
 
     io_context context;
@@ -43,7 +44,7 @@ int main()
 
     // we can now establish the PSI parameters, which creates the SEAL context,
     // which we need to receive keys and ciphertexts
-    PSIParams params(receiver_size, inputs.size(), input_bits);
+    PSIParams params(receiver_size, inputs.size(), input_bits, poly_modulus_degree);
     params.set_seeds(seeds);
     net.set_seal_context(params.context);
 

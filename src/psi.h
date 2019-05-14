@@ -12,18 +12,20 @@ using namespace seal;
 class PSIParams
 {
 public:
-    PSIParams(size_t receiver_size, size_t sender_size, size_t input_bits);
+    PSIParams(size_t receiver_size, size_t sender_size, size_t input_bits, size_t poly_modulus_degree);
     // you *must* call either generate_seeds or set_seeds.
     void generate_seeds();
     void set_seeds(vector<uint64_t> &seeds_ext);
 
-    size_t poly_modulus_degree();
     uint64_t plain_modulus();
     size_t hash_functions();
     size_t bucket_count_log();
     size_t sender_bucket_capacity();
     size_t sender_partition_count();
     size_t window_size();
+
+    void set_sender_partition_count(size_t new_value);
+    void set_window_size(size_t new_value);
 
     uint64_t encode_bucket_element(vector<uint64_t> &inputs, bucket_slot &element, bool is_receiver);
 

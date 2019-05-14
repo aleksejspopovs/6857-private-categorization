@@ -3,23 +3,21 @@
 
 #include "seal/seal.h"
 
-#define DEBUG_WITH_KEY_LEAK
 #include "psi.h"
 #include "random.h"
 
 using namespace std;
 using namespace seal;
 
-#include "polynomials.h"
-
 int main()
 {
     auto random_factory = UniformRandomGeneratorFactory::default_factory();
     auto random = random_factory->create();
 
-    size_t receiver_N = 8;
-    size_t sender_N = 16;
+    size_t receiver_N = 100;
+    size_t sender_N = 1024; //1ull << 20;
     size_t input_bits = 8;
+    size_t poly_modulus_degree = 8192;
 
     vector<uint64_t> sender_inputs(sender_N);
     vector<uint64_t> sender_labels(sender_N);
@@ -38,7 +36,7 @@ int main()
     }
 
     // step 1: agreeing on parameters.
-    PSIParams params(receiver_inputs.size(), sender_inputs.size(), input_bits);
+    PSIParams params(receiver_inputs.size(), sender_inputs.size(), input_bits, poly_modulus_degree);
     params.generate_seeds();
 
     cout << "Parameters chosen:" << endl;
@@ -68,15 +66,15 @@ int main()
     vector<bucket_slot> receiver_buckets;
     auto receiver_encrypted_inputs = user.encrypt_inputs(receiver_inputs, receiver_buckets);
 
-    cout << "User's buckets: ";
-    for (auto x : receiver_buckets) {
-        if (x == BUCKET_EMPTY) {
-            cout << "--:-- ";
-        } else {
-            cout << x.first << ":" << receiver_inputs[x.first] << " ";
-        }
-    }
-    cout << endl;
+    // cout << "User's buckets: ";
+    // for (auto x : receiver_buckets) {
+    //     if (x == BUCKET_EMPTY) {
+    //         cout << "--:-- ";
+    //     } else {
+    //         cout << x.first << ":" << receiver_inputs[x.first] << " ";
+    //     }
+    // }
+    // cout << endl;
     cout << endl;
 
 
@@ -93,9 +91,9 @@ int main()
     );
 
     cout << "Sender's set: ";
-    for (size_t i = 0; i < sender_inputs.size(); i++) {
-        cout << sender_inputs[i] << "-" << sender_labels[i] << " ";
-    }
+    // for (size_t i = 0; i < sender_inputs.size(); i++) {
+    //     cout << sender_inputs[i] << "-" << sender_labels[i] << " ";
+    // }
     cout << endl;
     cout << endl;
 

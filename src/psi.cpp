@@ -36,24 +36,26 @@ void multiply_by_random_mask(Ciphertext &ciphertext,
 }
 
 
-PSIParams::PSIParams(size_t receiver_size, size_t sender_size, size_t input_bits)
+PSIParams::PSIParams(size_t receiver_size, size_t sender_size, size_t input_bits, size_t poly_modulus_degree)
     : receiver_size(receiver_size),
       sender_size(sender_size),
       input_bits(input_bits),
-      poly_modulus_degree_(16384),
+      poly_modulus_degree_(poly_modulus_degree),
       sender_partition_count_(16),
       window_size_(3)
 {
+    assert((poly_modulus_degree_ == 8192) || (poly_modulus_degree_ == 16384));
+
     EncryptionParameters parms(scheme_type::BFV);
-    parms.set_poly_modulus_degree(poly_modulus_degree());
-    parms.set_coeff_modulus(DefaultParams::coeff_modulus_128(poly_modulus_degree()));
+    parms.set_poly_modulus_degree(poly_modulus_degree_);
+    parms.set_coeff_modulus(DefaultParams::coeff_modulus_128(poly_modulus_degree_));
     parms.set_plain_modulus(plain_modulus());
     context = SEALContext::Create(parms);
 
     // it must be possible to cuckoo hash the receiver's set into the buckets
     assert(receiver_size <= (1ull << bucket_count_log()));
     // all of the receiver's buckets must fit into one batched ciphertext
-    assert((1ull << bucket_count_log()) <= poly_modulus_degree());
+    assert((1ull << bucket_count_log()) <= poly_modulus_degree_);
 }
 
 void PSIParams::generate_seeds() {
@@ -69,10 +71,6 @@ void PSIParams::generate_seeds() {
 void PSIParams::set_seeds(vector<uint64_t> &seeds_ext) {
     assert(seeds_ext.size() == hash_functions());
     seeds = seeds_ext;
-}
-
-size_t PSIParams::poly_modulus_degree() {
-    return poly_modulus_degree_;
 }
 
 uint64_t PSIParams::plain_modulus() {
@@ -100,7 +98,7 @@ size_t PSIParams::hash_functions() {
 }
 
 size_t PSIParams::bucket_count_log() {
-    return (poly_modulus_degree() == 8192) ? 13 : 14;
+    return (poly_modulus_degree_ == 8192) ? 13 : 14;
 }
 
 size_t PSIParams::sender_bucket_capacity() {
@@ -149,6 +147,15 @@ size_t PSIParams::sender_partition_count() {
 size_t PSIParams::window_size() {
     return window_size_;
 }
+
+void PSIParams::set_sender_partition_count(size_t new_value) {
+    sender_partition_count_ = new_value;
+}
+
+void PSIParams::set_window_size(size_t new_value) {
+    window_size_ = new_value;
+}
+
 
 uint64_t PSIParams::encode_bucket_element(vector<uint64_t> &inputs, bucket_slot &element, bool is_receiver) {
     uint64_t result;

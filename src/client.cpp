@@ -12,6 +12,7 @@ int main()
 {
     vector<uint64_t> inputs = {0x02, 0x07, 0x05, 0xfe};
     size_t input_bits = 32;
+    size_t poly_modulus_degree = 8192;
     unsigned short port = 9999;
 
     io_context context;
@@ -25,7 +26,7 @@ int main()
     size_t sender_size = net.read_uint32();
 
     cout << "picking params" << endl;
-    PSIParams params(inputs.size(), sender_size, input_bits);
+    PSIParams params(inputs.size(), sender_size, input_bits, poly_modulus_degree);
     params.generate_seeds();
     net.set_seal_context(params.context);
     PSIReceiver receiver(params);
