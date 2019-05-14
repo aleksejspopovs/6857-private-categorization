@@ -1,13 +1,10 @@
 #include <cassert>
 #include <iostream>
 
-#include "seal/seal.h"
-
 #include "psi.h"
 #include "random.h"
 
 using namespace std;
-using namespace seal;
 
 int main()
 {

@@ -7,7 +7,6 @@
 #include "random.h"
 
 using namespace std;
-using namespace seal;
 
 int main(int argc, char** argv)
 {
