@@ -41,8 +41,8 @@ def run_case(case):
         nx=sender_size,
         ny=receiver_size,
         pmd=poly_modulus_degree,
-        al=window_size,
-        l=partition_count,
+        al=partition_count,
+        l=window_size,
     ))
 
     avg = lambda l: sum(l) / len(l)
