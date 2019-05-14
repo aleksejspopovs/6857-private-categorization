@@ -102,7 +102,7 @@ void Windowing::compute_powers(vector<Ciphertext> &windows,
         }
 
         for (size_t i = 1; i < window_count; i++) {
-            for (size_t j = 1; j <= window_size; j++) {
+            for (size_t j = 1; j <= window_width; j++) {
                 // now, for each new window i, we go over all of its elements
                 // j (encoding y^{2^{l * i} * j}) and compute every power of the
                 // form y^{2^{l * i} * j + k}, where k < 2^{l * i} (equivalently,
