@@ -4,10 +4,18 @@
 
 uint64_t random_bits(shared_ptr<UniformRandomGenerator> random, size_t bits) {
     assert((bits > 0) && (bits <= 64));
-    // generate 64 bits of randomness
-    uint64_t result = (random->generate() | ((uint64_t) random->generate() << 32));
-    // reduce that to k bits of randomness;
-    result = (result >> (64 - bits));
+    uint64_t result;
+    if (bits <= 32) {
+        // generate 64 bits of randomness
+        result = random->generate();
+        // reduce that to k bits of randomness;
+        result = (result >> (32 - bits));
+    } else {
+        // generate 64 bits of randomness
+        result = random->generate() | ((uint64_t) random->generate() << 32);
+        // reduce that to k bits of randomness;
+        result = (result >> (64 - bits));
+    }
     return result;
 }
 
