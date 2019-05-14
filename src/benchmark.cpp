@@ -5,6 +5,7 @@
 
 #include "psi.h"
 #include "random.h"
+#include "test_utils.h"
 
 using namespace std;
 
@@ -39,37 +40,15 @@ int main(int argc, char** argv)
     vector<uint64_t> sender_inputs(sender_size);
     vector<uint64_t> sender_labels(sender_size);
     vector<uint64_t> receiver_inputs(receiver_size);
-    set<uint64_t> receiver_seen;
-    set<uint64_t> sender_seen;
 
     for (size_t i = 0; i < iteration_count; i++) {
         // generate random inputs
-        sender_seen.clear();
-        for (size_t j = 0; j < sender_size; j++) {
-            uint64_t value;
-            do {
-                value = random_bits(random, input_bits);
-            } while (sender_seen.count(value) > 0);
-            sender_inputs[j] = value;
-            sender_seen.insert(value);
-        }
+        generate_random_sender_set(random, sender_inputs, input_bits);
         if (labeled) {
-            for (size_t j = 0; j < sender_size; j++) {
-                sender_labels[j] = random_bits(random, input_bits);
-            }
+            generate_random_labels(random, sender_labels, input_bits);
         }
 
-        receiver_seen.clear();
-        for (size_t j = 0; j < receiver_size; j++) {
-            uint64_t value;
-            do {
-                value = (random_bits(random, 1) == 0)
-                        ? random_bits(random, input_bits)
-                        : sender_inputs[random_integer(random, sender_size)];
-            } while (receiver_seen.count(value) > 0);
-            receiver_inputs[j] = value;
-            receiver_seen.insert(value);
-        }
+        generate_random_receiver_set(random, receiver_inputs, sender_inputs, input_bits, 50);
 
         // generate params
         PSIParams params(receiver_size, sender_size, input_bits, poly_modulus_degree);

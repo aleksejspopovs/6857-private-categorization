@@ -18,12 +18,12 @@ set(
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native")
 
-add_executable(private_categorization main.cpp ${SOURCES})
-add_executable(private_categorization_debug_entropy main.cpp ${SOURCES})
+add_executable(private_categorization main.cpp test_utils.cpp ${SOURCES})
+add_executable(private_categorization_debug_entropy main.cpp test_utils.cpp ${SOURCES})
 set_target_properties(private_categorization_debug_entropy PROPERTIES COMPILE_FLAGS "-DDEBUG_WITH_KEY_LEAK")
 add_executable(pc_client client.cpp ${SOURCES})
 add_executable(pc_server server.cpp ${SOURCES})
-add_executable(benchmark benchmark.cpp ${SOURCES})
+add_executable(benchmark benchmark.cpp test_utils.cpp ${SOURCES})
 
 # Import Boost (for networking)
 find_package(Boost REQUIRED)
