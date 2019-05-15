@@ -83,11 +83,19 @@ uint64_t PSIParams::plain_modulus() {
     }
 
     if (min_log_modulus <= 16) {
-        return (8192 * 2 * 4) + 1; // 2^16 + 1
+        return 65537ull; // 2^16 + 1
+    } else if (min_log_modulus <= 20) {
+        return 1146881ull; // 2^20 + 3 * 2^15 + 1
+    } else if (min_log_modulus <= 21) {
+        return 2424833ull; // 2^21 + 10 * 2^15 + 1
     } else if (min_log_modulus <= 23) {
         return 8519681ull; // 2^23 + 2^17 + 1
     } else if (min_log_modulus <= 35) {
         return 34359771137ull; // 2^35 + 2^15 + 1
+    } else if (min_log_modulus <= 36) {
+        return 68720066561ull; // 2^36 + 18 * 2^15 + 1
+    } else if (min_log_modulus <= 37) {
+        return 137439477761ull; // 2^37 + 16 * 2^15 + 1
     } else {
         assert(0);
     }
@@ -98,12 +106,18 @@ size_t PSIParams::hash_functions() {
 }
 
 size_t PSIParams::bucket_count_log() {
-    return (poly_modulus_degree_ == 8192) ? 13 : 14;
+    switch (poly_modulus_degree_) {
+        case 8192: return 13;
+        case 16384: return 14;
+        default: assert(0);
+    }
+    return 0;
 }
 
 size_t PSIParams::sender_bucket_capacity() {
     // see Table 1 in [CLR17]
     assert(hash_functions() == 3);
+
     if (bucket_count_log() == 13) {
         if (sender_size <= (1ull << 8)) {
             return 9;
